@@ -1,5 +1,8 @@
-# target-specific defaults, can still be overridden on
-# the command line
+[binaries]
+c = 'gcc'
+cpp = 'g++'
+ar = 'ar'
+strip = 'strip'
 
 [built-in options]
 bindir = ''
@@ -7,3 +10,9 @@ prefix = '/qemu'
 
 [project options]
 qemu_suffix = ''
+
+[host_machine]
+system = 'windows'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'

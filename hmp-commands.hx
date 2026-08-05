@@ -1831,6 +1831,19 @@ SRST
 ERST
 #endif
 
+    {
+        .name       = "compat-wake-cpu",
+        .args_type  = "mpidr:l,entry:l,context:l?",
+        .params     = "mpidr entry [context]",
+        .help       = "wake secondary ARM vCPU via arm_set_cpu_on()",
+        .cmd        = hmp_compat_wake_cpu,
+    },
+
+SRST
+``compat-wake-cpu`` *mpidr* *entry* [*context*]
+  Wake secondary ARM vCPU via arm_set_cpu_on().
+ERST
+
 #if defined(CONFIG_XEN_EMU)
     {
         .name       = "xen-event-inject",

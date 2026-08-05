@@ -17,6 +17,10 @@
 #include "qemu/main-loop.h"
 #include "sysemu/tcg.h"
 #include "target/arm/multiprocessing.h"
+#include "monitor/hmp.h"
+#include "monitor/monitor.h"
+#include "qapi/qmp/qdict.h"
+
 
 #ifndef DEBUG_ARM_POWERCTL
 #define DEBUG_ARM_POWERCTL 0
@@ -91,6 +95,9 @@ static void arm_set_cpu_on_async_work(CPUState *target_cpu_state,
     /* Finally set the power status */
     assert(bql_locked());
     target_cpu->power_state = PSCI_ON;
+    qemu_log_mask(LOG_GUEST_ERROR,
+                  "[CompatWake] arm_set_cpu_on_async_work: SUCCESS — CPU powered_off=false, halted=0, PC=0x%" PRIx64 "\n",
+                  info->entry);
 }
 
 int arm_set_cpu_on(uint64_t cpuid, uint64_t entry, uint64_t context_id,
@@ -319,3 +326,16 @@ int arm_reset_cpu(uint64_t cpuid)
 
     return QEMU_ARM_POWERCTL_RET_SUCCESS;
 }
+
+void hmp_compat_wake_cpu(Monitor *mon, const QDict *qdict)
+{
+    int64_t mpidr = qdict_get_int(qdict, "mpidr");
+    int64_t entry = qdict_get_int(qdict, "entry");
+    int64_t context = qdict_get_try_int(qdict, "context", 0);
+
+    monitor_printf(mon, "[CompatWake] HMP wake request: MPIDR=0x%" PRIx64 " Entry=0x%" PRIx64 " Context=0x%" PRIx64 "\n", (uint64_t)mpidr, (uint64_t)entry, (uint64_t)context);
+
+    int ret = arm_set_cpu_on((uint64_t)mpidr, (uint64_t)entry, (uint64_t)context, 1 /* EL1 */, true /* AArch64 */);
+    monitor_printf(mon, "[CompatWake] arm_set_cpu_on() returned %d\n", ret);
+}
+

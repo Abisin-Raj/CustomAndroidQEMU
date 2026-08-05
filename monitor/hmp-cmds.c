@@ -30,6 +30,7 @@
 #include "qemu/log.h"
 #include "sysemu/sysemu.h"
 
+
 bool hmp_handle_error(Monitor *mon, Error *err)
 {
     if (err) {
@@ -434,3 +435,4 @@ void hmp_dumpdtb(Monitor *mon, const QDict *qdict)
     monitor_printf(mon, "dtb dumped to %s", filename);
 }
 #endif
+

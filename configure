@@ -950,20 +950,19 @@ if test "$?" -ne 0 ; then
 fi
 
 # Suppress writing compiled files
-python="$python -B"
-mkvenv="$python ${source_path}/python/scripts/mkvenv.py"
+mkvenv="\"$python\" -B \"${source_path}/python/scripts/mkvenv.py\""
 
 # Finish preparing the virtual environment using vendored .whl files
 
-$mkvenv ensuregroup --dir "${source_path}/python/wheels" \
-     ${source_path}/pythondeps.toml meson || exit 1
+eval $mkvenv ensuregroup --dir "\"${source_path}/python/wheels\"" \
+     "\"${source_path}/pythondeps.toml\"" meson || exit 1
 
 # At this point, we expect Meson to be installed and available.
 # We expect mkvenv or pip to have created pyvenv/bin/meson for us.
 # We ignore PATH completely here: we want to use the venv's Meson
 # *exclusively*.
 
-meson="$(cd pyvenv/bin; pwd)/meson"
+meson="$(cd pyvenv/bin; pwd -P)/meson"
 
 # Conditionally ensure Sphinx is installed.
 
@@ -1796,7 +1795,7 @@ if test "$skip_meson" = no; then
   test "$plugins" = yes && meson_option_add "-Dplugins=true"
   test "$tcg" != enabled && meson_option_add "-Dtcg=$tcg"
   run_meson() {
-    NINJA=$ninja $meson setup "$@" "$PWD" "$source_path"
+    NINJA=$ninja /mingw64/bin/meson setup "$@" "$PWD" "$source_path"
   }
   eval run_meson $meson_options
   if test "$?" -ne 0 ; then

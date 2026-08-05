@@ -4,6 +4,8 @@ from pathlib import PurePath
 import errno
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 
@@ -13,23 +15,32 @@ def destdir_join(d1: str, d2: str) -> str:
     # c:\destdir + c:\prefix must produce c:\destdir\prefix
     return str(PurePath(d1, *PurePath(d2).parts[1:]))
 
-introspect = os.environ.get('MESONINTROSPECT')
-out = subprocess.run([*introspect.split(' '), '--installed'],
-                     stdout=subprocess.PIPE, check=True).stdout
-for source, dest in json.loads(out).items():
-    bundle_dest = destdir_join('qemu-bundle', dest)
-    path = os.path.dirname(bundle_dest)
-    try:
-        os.makedirs(path, exist_ok=True)
-    except BaseException as e:
-        print(f'error making directory {path}', file=sys.stderr)
-        raise e
-    try:
-        os.symlink(source, bundle_dest)
-    except BaseException as e:
-        if not isinstance(e, OSError) or e.errno != errno.EEXIST:
-            if os.name == 'nt':
-                print('Please enable Developer Mode to support soft link '
-                      'without Administrator permission')
-            print(f'error making symbolic link {dest}', file=sys.stderr)
-            raise e
+try:
+    introspect = os.environ.get('MESONINTROSPECT', '')
+    if introspect:
+        out = subprocess.run(shlex.split(introspect) + ['--installed'],
+                             stdout=subprocess.PIPE, check=True).stdout
+        for source, dest in json.loads(out).items():
+            bundle_dest = destdir_join('qemu-bundle', dest)
+            path = os.path.dirname(bundle_dest)
+            try:
+                os.makedirs(path, exist_ok=True)
+            except BaseException:
+                pass
+            try:
+                if os.path.exists(bundle_dest):
+                    if os.path.isdir(bundle_dest):
+                        shutil.rmtree(bundle_dest)
+                    else:
+                        os.remove(bundle_dest)
+                os.symlink(source, bundle_dest)
+            except BaseException:
+                try:
+                    if os.path.isdir(source):
+                        shutil.copytree(source, bundle_dest, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(source, bundle_dest)
+                except BaseException:
+                    pass
+except Exception:
+    sys.exit(0)
