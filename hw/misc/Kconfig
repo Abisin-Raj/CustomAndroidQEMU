@@ -216,4 +216,7 @@ config XLNX_VERSAL_TRNG
 config QCOM_GCC_SM6150
     bool
 
+config QCOM_UFSHC
+    bool
+
 source macio/Kconfig

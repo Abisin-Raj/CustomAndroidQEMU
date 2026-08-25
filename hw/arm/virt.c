@@ -2420,6 +2420,16 @@ static void machvirt_init(MachineState *machine)
         sysbus_mmio_map(SYS_BUS_DEVICE(gcc_dev), 0, 0x100000);
     }
 
+    /* Create Qualcomm SM6150 UFS Host Controller (0x1d84000), PHY (0x1d87000), and ICE (0x1d90000) */
+    {
+        DeviceState *ufs_dev = qdev_new("qcom-ufshc");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(ufs_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(ufs_dev), 0, 0x1d84000); /* UFSHCI Host Controller */
+        sysbus_mmio_map(SYS_BUS_DEVICE(ufs_dev), 1, 0x1d87000); /* QMP UFS PHY */
+        sysbus_mmio_map(SYS_BUS_DEVICE(ufs_dev), 2, 0x1d90000); /* UFS ICE */
+        sysbus_connect_irq(SYS_BUS_DEVICE(ufs_dev), 0, qdev_get_gpio_in(vms->gic, 128));
+    }
+
     if (machine->nvdimms_state->is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {
             .space_id = AML_AS_SYSTEM_MEMORY,

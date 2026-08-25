@@ -37,6 +37,7 @@ config ARM_VIRT
     select ACPI_CXL
     select ACPI_HMAT
     select QCOM_GCC_SM6150
+    select QCOM_UFSHC
 
 config CHEETAH
     bool

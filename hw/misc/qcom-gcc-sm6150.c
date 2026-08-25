@@ -61,14 +61,40 @@ struct QcomGccSm6150State {
     uint8_t regs[GCC_SIZE];
 };
 
-static inline bool is_pll_mode_reg(hwaddr offset)
+static inline bool is_pll_reg(hwaddr offset)
 {
-    return (offset == GPLL0_MODE_OFF ||
-            offset == GPLL1_MODE_OFF ||
-            offset == GPLL6_MODE_OFF ||
-            offset == GPLL8_MODE_OFF ||
-            offset == GPLL4_MODE_OFF ||
-            offset == GPLL7_MODE_OFF);
+    return ((offset <= GPLL0_MODE_OFF + 0x30) ||
+            (offset >= GPLL1_MODE_OFF && offset <= GPLL1_MODE_OFF + 0x30) ||
+            (offset >= GPLL6_MODE_OFF && offset <= GPLL6_MODE_OFF + 0x30) ||
+            (offset >= GPLL8_MODE_OFF && offset <= GPLL8_MODE_OFF + 0x30) ||
+            (offset >= GPLL4_MODE_OFF && offset <= GPLL4_MODE_OFF + 0x30) ||
+            (offset >= GPLL7_MODE_OFF && offset <= GPLL7_MODE_OFF + 0x30));
+}
+
+static inline bool is_vote_reg(hwaddr offset)
+{
+    /* APCS voting registers for shared clocks and PLLs (0x38000 - 0x38030) */
+    return (offset >= 0x38000 && offset <= 0x38030);
+}
+
+static inline bool is_ufs_rcg_cmd(hwaddr offset)
+{
+    switch (offset) {
+    case 0x77014: /* gcc_ufs_phy_axi_clk_src CMD_RCGR */
+    case 0x77044: /* gcc_ufs_phy_unipro_core_clk_src CMD_RCGR */
+    case 0x77060: /* gcc_ufs_phy_ice_core_clk_src CMD_RCGR */
+    case 0x77094: /* gcc_ufs_phy_phy_aux_clk_src CMD_RCGR */
+        return true;
+    default:
+        return false;
+    }
+}
+
+static inline bool is_ufs_cbcr(hwaddr offset)
+{
+    /* All UFS clock branches in 0x77000..0x770ff and the UFS reference clock 0x8c000 */
+    return ((offset >= 0x77000 && offset <= 0x770ff && !is_ufs_rcg_cmd(offset)) ||
+            offset == 0x8c000);
 }
 
 static uint64_t qcom_gcc_sm6150_read(void *opaque, hwaddr offset, unsigned size)
@@ -86,6 +112,22 @@ static uint64_t qcom_gcc_sm6150_read(void *opaque, hwaddr offset, unsigned size)
     switch (size) {
     case 4:
         val = *(uint32_t *)(s->regs + offset);
+        if (is_ufs_cbcr(offset)) {
+            /*
+             * Qualcomm UFS Branch Control Register (CBCR):
+             * Bit 0: CLK_ENABLE / HWCG mode active.
+             * Bit 31: CLK_OFF = 0 (running).
+             * Guarantees all kernel clock enable/disable/hwcg checks succeed instantly.
+             */
+            return 0x00000001U;
+        } else if (is_ufs_rcg_cmd(offset)) {
+            /*
+             * Qualcomm RCG2 Command Register (CMD_RCGR):
+             * Bit  0: UPDATE = 0 (Hardware completed update)
+             * Bit 31: ROOT_OFF = 0 (Root generator is active)
+             */
+            val &= ~0x80000001U;
+        }
         break;
     case 8:
         val = *(uint64_t *)(s->regs + offset);
@@ -116,28 +158,26 @@ static void qcom_gcc_sm6150_write(void *opaque, hwaddr offset,
     if (size == 4) {
         uint32_t val = (uint32_t)value;
 
-        if (is_pll_mode_reg(offset)) {
+        if (is_pll_reg(offset)) {
             /* Keep PLL locked and output enabled */
             val |= PLL_MODE_LOCKED;
-        } else {
+        } else if (is_vote_reg(offset)) {
+            /* Voting registers (APCS_*_ENA_VOTE): store exact bitmask */
+        } else if (is_ufs_cbcr(offset)) {
             /*
              * Model Qualcomm Branch Control Register (CBCR) hardware behavior:
-             *   Bit  0: CLK_ENABLE (Software write: 1 = enable, 0 = disable)
-             *   Bit 31: CLK_OFF    (Hardware status: 0 = running, 1 = gated/off)
+             *   Bit  0: CLK_ENABLE (1 = enable, 0 = disable)
+             *   Bit 31: CLK_OFF    (0 = running, 1 = gated/off)
              *   Bits [30:28]: NOC FSM status (0 = ON, 2 = OFF)
-             *
-             * When software enables the clock (Bit 0 = 1):
-             *   Hardware clears Bit 31 (CLK_OFF = 0) and bits [30:28].
-             * When software disables the clock (Bit 0 = 0):
-             *   Hardware sets Bit 31 (CLK_OFF = 1) to indicate the branch is gated.
              */
             if (val & 1) {
-                /* Clock Enabled -> CLK_OFF = 0, FSM_STATUS = 0 */
                 val &= ~0xF0000000U;
             } else {
-                /* Clock Disabled -> CLK_OFF = 1 */
                 val = (val & ~0xF0000000U) | 0x80000000U;
             }
+        } else if (is_ufs_rcg_cmd(offset)) {
+            /* Auto-clear UPDATE bit on write and ensure ROOT_OFF = 0 */
+            val &= ~0x80000001U;
         }
 
         *(uint32_t *)(s->regs + offset) = val;
@@ -176,12 +216,40 @@ static void init_pll_state(uint8_t *regs, uint32_t offset)
     *(uint32_t *)(regs + offset + 0x24) = 0x00000001U;
 }
 
+static const uint32_t ufs_hwcg_cbcr_offsets[] = {
+    0x77010, /* gcc_ufs_phy_axi_clk */
+    0x77038, /* gcc_ufs_phy_ahb_clk */
+    0x77040, /* gcc_ufs_phy_unipro_core_clk */
+    0x77058, /* gcc_ufs_phy_ice_core_clk */
+    0x7705c, /* gcc_ufs_phy_tx_symbol_0_clk */
+    0x77078, /* gcc_ufs_phy_rx_symbol_0_clk */
+    0x7708c, /* gcc_ufs_phy_rx_symbol_1_clk */
+    0x77090, /* gcc_ufs_phy_phy_aux_clk */
+    0x770c0, /* gcc_ufs_phy_unipro_core_clk */
+};
+
 static void qcom_gcc_sm6150_reset(DeviceState *dev)
 {
     QcomGccSm6150State *s = QCOM_GCC_SM6150(dev);
 
     /* Clear all registers to default 0 state */
     memset(s->regs, 0, sizeof(s->regs));
+
+    /*
+     * Pre-initialize all UFS branch clocks to active / running state (CLK_OFF = 0).
+     */
+    for (size_t i = 0; i < ARRAY_SIZE(ufs_hwcg_cbcr_offsets); i++) {
+        uint32_t off = ufs_hwcg_cbcr_offsets[i];
+        if (off + 4 <= GCC_SIZE) {
+            *(uint32_t *)(s->regs + off) = 0x00000000U;
+        }
+    }
+
+    /*
+     * Pre-initialize gcc_ufs_mem_clkref_clk (0x8c000) to disabled/gated state (CLK_OFF = 1).
+     * The Linux UFS platform driver disables this reference clock on initial setup.
+     */
+    *(uint32_t *)(s->regs + 0x8c000) = 0x80000000U;
 
     /*
      * Pre-initialize all PLLs to firmware-locked state with valid L_VAL.
