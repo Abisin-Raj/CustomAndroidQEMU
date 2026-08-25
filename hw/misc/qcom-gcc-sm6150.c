@@ -61,6 +61,16 @@ struct QcomGccSm6150State {
     uint8_t regs[GCC_SIZE];
 };
 
+static inline bool is_pll_mode_reg(hwaddr offset)
+{
+    return (offset == GPLL0_MODE_OFF ||
+            offset == GPLL1_MODE_OFF ||
+            offset == GPLL6_MODE_OFF ||
+            offset == GPLL8_MODE_OFF ||
+            offset == GPLL4_MODE_OFF ||
+            offset == GPLL7_MODE_OFF);
+}
+
 static uint64_t qcom_gcc_sm6150_read(void *opaque, hwaddr offset, unsigned size)
 {
     QcomGccSm6150State *s = QCOM_GCC_SM6150(opaque);
@@ -103,19 +113,40 @@ static void qcom_gcc_sm6150_write(void *opaque, hwaddr offset,
         return;
     }
 
-    switch (size) {
-    case 4:
-        *(uint32_t *)(s->regs + offset) = (uint32_t)value;
-        break;
-    case 8:
+    if (size == 4) {
+        uint32_t val = (uint32_t)value;
+
+        if (is_pll_mode_reg(offset)) {
+            /* Keep PLL locked and output enabled */
+            val |= PLL_MODE_LOCKED;
+        } else {
+            /*
+             * Model Qualcomm Branch Control Register (CBCR) hardware behavior:
+             *   Bit  0: CLK_ENABLE (Software write: 1 = enable, 0 = disable)
+             *   Bit 31: CLK_OFF    (Hardware status: 0 = running, 1 = gated/off)
+             *   Bits [30:28]: NOC FSM status (0 = ON, 2 = OFF)
+             *
+             * When software enables the clock (Bit 0 = 1):
+             *   Hardware clears Bit 31 (CLK_OFF = 0) and bits [30:28].
+             * When software disables the clock (Bit 0 = 0):
+             *   Hardware sets Bit 31 (CLK_OFF = 1) to indicate the branch is gated.
+             */
+            if (val & 1) {
+                /* Clock Enabled -> CLK_OFF = 0, FSM_STATUS = 0 */
+                val &= ~0xF0000000U;
+            } else {
+                /* Clock Disabled -> CLK_OFF = 1 */
+                val = (val & ~0xF0000000U) | 0x80000000U;
+            }
+        }
+
+        *(uint32_t *)(s->regs + offset) = val;
+    } else if (size == 8) {
         *(uint64_t *)(s->regs + offset) = value;
-        break;
-    case 2:
+    } else if (size == 2) {
         *(uint16_t *)(s->regs + offset) = (uint16_t)value;
-        break;
-    case 1:
+    } else if (size == 1) {
         s->regs[offset] = (uint8_t)value;
-        break;
     }
 }
 
@@ -149,7 +180,7 @@ static void qcom_gcc_sm6150_reset(DeviceState *dev)
 {
     QcomGccSm6150State *s = QCOM_GCC_SM6150(dev);
 
-    /* Clear all registers */
+    /* Clear all registers to default 0 state */
     memset(s->regs, 0, sizeof(s->regs));
 
     /*
