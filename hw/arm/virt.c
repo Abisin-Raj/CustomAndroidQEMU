@@ -84,6 +84,7 @@
 #include "hw/virtio/virtio-iommu.h"
 #include "hw/char/pl011.h"
 #include "qemu/guest-random.h"
+#include "hw/qdev-core.h"
 
 static GlobalProperty arm_virt_compat[] = {
     { TYPE_VIRTIO_IOMMU_PCI, "aw-bits", "48" },
@@ -2407,6 +2408,17 @@ static void machvirt_init(MachineState *machine)
     rom_set_fw(vms->fw_cfg);
 
     create_platform_bus(vms);
+
+    /* Create Qualcomm SM6150 GCC clock controller stub at 0x100000.
+     * This pre-initializes all PLLs to firmware-locked state (LOCK_DET=1)
+     * so the Linux kernel's gcc-sm6150 driver does not fail during
+     * clk_alpha_pll_enable() -> wait_for_lock() when booting without XBL.
+     */
+    {
+        DeviceState *gcc_dev = qdev_new("qcom-gcc-sm6150");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(gcc_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(gcc_dev), 0, 0x100000);
+    }
 
     if (machine->nvdimms_state->is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {

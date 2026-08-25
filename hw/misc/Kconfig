@@ -213,4 +213,7 @@ config IOSB
 config XLNX_VERSAL_TRNG
     bool
 
+config QCOM_GCC_SM6150
+    bool
+
 source macio/Kconfig
