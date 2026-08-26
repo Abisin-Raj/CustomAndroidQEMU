@@ -1,5 +1,5 @@
 /*
- * Qualcomm SM6150 UFS Host Controller (UFSHCI) & QMP PHY emulation for QEMU.
+ * Qualcomm SM6150 UFS Host Controller (UFSHCI 2.1) & QMP PHY emulation for QEMU.
  *
  * Emulates the UFSHCI 2.1 host controller at 0x1d84000, the QMP UFS PHY at
  * 0x1d87000, and the UFS ICE crypto block at 0x1d90000.
@@ -32,20 +32,36 @@ OBJECT_DECLARE_SIMPLE_TYPE(QcomUfsState, QCOM_UFSHC)
 #define REG_INTERRUPT_ENABLE        0x24
 #define REG_HOST_CONTROLLER_STATUS  0x30
 #define REG_HOST_CONTROLLER_ENABLE  0x34
-#define REG_UTRLBA                  0x3C
-#define REG_UTRLBAU                 0x40
-#define REG_UTRLDBR                 0x44
-#define REG_UTRLCLR                 0x48
-#define REG_UTRLRSR                 0x4C
-#define REG_UTMRLBA                 0x50
-#define REG_UTMRLBAU                0x54
-#define REG_UTMRLDBR                0x58
-#define REG_UTMRLCLR                0x5C
-#define REG_UTMRLRSR                0x60
+#define REG_UTRIACR                 0x38
+#define REG_UTRLBA                  0x50
+#define REG_UTRLBAU                 0x54
+#define REG_UTRLDBR                 0x58
+#define REG_UTRLCLR                 0x5C
+#define REG_UTRLRSR                 0x60
+#define REG_UTMRLBA                 0x70
+#define REG_UTMRLBAU                0x74
+#define REG_UTMRLDBR                0x78
+#define REG_UTMRLCLR                0x7C
+#define REG_UTMRLRSR                0x80
 #define REG_UICCMD                  0x90
 #define REG_UICCMDARG1              0x94
 #define REG_UICCMDARG2              0x98
 #define REG_UICCMDARG3              0x9C
+
+/* Interrupt Status Bits */
+#define INT_UTRCS                   (1U << 0)  /* UTP Transfer Request Completion */
+#define INT_UDEPRI                  (1U << 1)  /* UTP Error */
+#define INT_UE                      (1U << 2)  /* Host Controller Fatal Error */
+#define INT_UTMRCS                  (1U << 3)  /* Task Management Completion */
+#define INT_UPMS                    (1U << 4)  /* Power Mode Status */
+#define INT_UHXS                    (1U << 5)  /* UIC Hibernate Exit Status */
+#define INT_UHES                    (1U << 6)  /* UIC Hibernate Enter Status */
+#define INT_ULLS                    (1U << 7)  /* UIC Link Lost Status */
+#define INT_ULSS                    (1U << 8)  /* UIC Link Startup Status */
+#define INT_UTMRIS                  (1U << 9)  /* Task Management Request Interrupted */
+#define INT_UCCS                    (1U << 10) /* UIC Command Completion Status */
+#define INT_DFES                    (1U << 11) /* Device Fatal Error Status */
+#define INT_UTPES                   (1U << 12) /* UTP Error Status */
 
 /* UIC Command codes */
 #define UIC_CMD_DME_GET             0x01
@@ -61,18 +77,48 @@ OBJECT_DECLARE_SIMPLE_TYPE(QcomUfsState, QCOM_UFSHC)
 #define UIC_CMD_DME_HIBERN8_ENTER   0x17
 #define UIC_CMD_DME_HIBERN8_EXIT    0x18
 
-/* Interrupt status bits */
-#define INT_UTRCS                   (1 << 0)
-#define INT_UDEPRI                  (1 << 1)
-#define INT_UE                      (1 << 2)
-#define INT_UTMS                    (1 << 3)
-#define INT_UPMS                    (1 << 4)
-#define INT_UHXS                    (1 << 5)
-#define INT_UHES                    (1 << 6)
-#define INT_ULLS                    (1 << 7)
-#define INT_ULSS                    (1 << 8)
-#define INT_UTMRCS                  (1 << 9)
-#define INT_UCCS                    (1 << 10)
+/* UPIU Transaction Codes */
+#define UPIU_TRANSACTION_NOP_OUT    0x00
+#define UPIU_TRANSACTION_COMMAND    0x01
+#define UPIU_TRANSACTION_QUERY_REQ  0x16
+#define UPIU_TRANSACTION_NOP_IN     0x20
+#define UPIU_TRANSACTION_RESPONSE   0x21
+#define UPIU_TRANSACTION_QUERY_RSP  0x36
+
+/* Query Opcodes */
+#define UPIU_QUERY_OPCODE_READ_DESC 0x01
+#define UPIU_QUERY_OPCODE_WRITE_DESC 0x02
+#define UPIU_QUERY_OPCODE_READ_ATTR 0x03
+#define UPIU_QUERY_OPCODE_WRITE_ATTR 0x04
+#define UPIU_QUERY_OPCODE_READ_FLAG 0x05
+#define UPIU_QUERY_OPCODE_SET_FLAG  0x06
+#define UPIU_QUERY_OPCODE_CLEAR_FLAG 0x07
+#define UPIU_QUERY_OPCODE_TOGGLE_FLAG 0x08
+
+/* Query Descriptor IDN */
+#define QUERY_DESC_IDN_DEVICE       0x00
+#define QUERY_DESC_IDN_CONFIG       0x01
+#define QUERY_DESC_IDN_UNIT         0x02
+#define QUERY_DESC_IDN_INTERCONNECT 0x04
+#define QUERY_DESC_IDN_STRING       0x05
+#define QUERY_DESC_IDN_GEOMETRY     0x07
+#define QUERY_DESC_IDN_POWER        0x08
+
+/* SCSI Commands */
+#define SCSI_TEST_UNIT_READY        0x00
+#define SCSI_REQUEST_SENSE          0x03
+#define SCSI_INQUIRY                0x12
+#define SCSI_MODE_SENSE_6           0x1A
+#define SCSI_START_STOP_UNIT        0x1B
+#define SCSI_READ_CAPACITY_10       0x25
+#define SCSI_READ_10                0x28
+#define SCSI_WRITE_10               0x2A
+#define SCSI_SYNCHRONIZE_CACHE      0x35
+#define SCSI_MODE_SENSE_10          0x5A
+#define SCSI_READ_16                0x88
+#define SCSI_WRITE_16               0x8A
+#define SCSI_READ_CAPACITY_16       0x9E
+#define SCSI_REPORT_LUNS            0xA0
 
 struct QcomUfsState {
     SysBusDevice parent_obj;
@@ -86,7 +132,7 @@ struct QcomUfsState {
     uint8_t ufsphy_regs[UFSPHY_MMIO_SIZE];
     uint8_t ufsice_regs[UFSICE_MMIO_SIZE];
 
-    /* Internal attributes for DME_GET / DME_SET */
+    /* UniPro / M-PHY Link Attributes */
     uint32_t pa_avail_tx_lanes;
     uint32_t pa_avail_rx_lanes;
     uint32_t pa_active_tx_lanes;
@@ -96,16 +142,27 @@ struct QcomUfsState {
     uint32_t pa_tx_gear;
     uint32_t pa_rx_gear;
     uint32_t pa_hs_series;
+
+    /* Device Flags & Attributes */
+    uint8_t flag_fDeviceInit;
+    uint8_t attr_bBootLunEn;
+    uint8_t attr_bCurrentPowerMode;
 };
 
+/* Update IRQ status according to (INTERRUPT_STATUS & INTERRUPT_ENABLE) */
 static void qcom_ufs_update_irq(QcomUfsState *s)
 {
     uint32_t is = *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS);
     uint32_t ie = *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_ENABLE);
 
-    qemu_set_irq(s->irq, (is & ie) != 0);
+    bool level = (is & ie) != 0;
+    qemu_set_irq(s->irq, 0);
+    if (level) {
+        qemu_set_irq(s->irq, 1);
+    }
 }
 
+/* UniPro DME Attributes */
 static uint32_t get_uic_attr(QcomUfsState *s, uint32_t attr_sel)
 {
     uint32_t attr = (attr_sel >> 16) & 0xFFFF;
@@ -211,6 +268,511 @@ static void handle_uic_command(QcomUfsState *s, uint32_t cmd)
     qcom_ufs_update_irq(s);
 }
 
+/* Encode UTF-16LE string for UFS string descriptor */
+static int encode_string_desc(const char *str, uint8_t *buf, int max_len)
+{
+    int len = strlen(str);
+    int desc_len = 2 + len * 2;
+    if (desc_len > max_len) desc_len = max_len;
+
+    buf[0] = (uint8_t)desc_len;
+    buf[1] = 0x05; /* STRING DESC */
+
+    for (int i = 0; i < len && (2 + i * 2 + 1) < desc_len; i++) {
+        buf[2 + i * 2] = (uint8_t)str[i];
+        buf[2 + i * 2 + 1] = 0x00;
+    }
+    return desc_len;
+}
+
+/* Handle Query Request UPIU */
+static void handle_query_request(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
+                                 uint64_t data_dma_addr, uint32_t data_len)
+{
+    uint8_t opcode = req[16];
+    uint8_t idn = req[17];
+    uint8_t index = req[18];
+    uint8_t selector = req[19];
+
+    (void)selector;
+
+    memcpy(rsp, req, 32);
+    rsp[0] = UPIU_TRANSACTION_QUERY_RSP; /* 0x36 */
+    rsp[6] = 0x00; /* SUCCESS */
+    rsp[7] = 0x00;
+
+    switch (opcode) {
+    case UPIU_QUERY_OPCODE_READ_DESC: {
+        uint8_t desc_buf[256];
+        memset(desc_buf, 0, sizeof(desc_buf));
+        int desc_len = 0;
+
+        if (idn == QUERY_DESC_IDN_DEVICE) {
+            /* Device Descriptor (64 bytes) */
+            desc_len = 64;
+            desc_buf[0] = 64;   /* bLength */
+            desc_buf[1] = 0x00; /* bDescriptorType = DEVICE */
+            desc_buf[2] = 0x01; /* bDeviceSubClass = UFS */
+            desc_buf[3] = 0x08; /* bNumberLU = 8 Logical Units */
+            desc_buf[4] = 0x01; /* bBootEnable = 1 */
+            desc_buf[5] = 0x01; /* bDescrAccessEn = 1 */
+            desc_buf[6] = 0x01; /* bInitPowerMode = 1 */
+            desc_buf[7] = 0x00; /* bHighPriorityLUN */
+            desc_buf[8] = 0x00; /* bSecureRemovalType */
+            desc_buf[9] = 0x00; /* bSecurityLU */
+            desc_buf[10] = 0x00;/* bInitActiveICCLevel */
+            desc_buf[11] = 0x02;/* wSpecVersion MSB (0x0210) */
+            desc_buf[12] = 0x10;/* wSpecVersion LSB */
+            desc_buf[13] = 0x20;/* wManufacturerDate MSB */
+            desc_buf[14] = 0x24;/* wManufacturerDate LSB */
+            desc_buf[15] = 0x01;/* iManufacturerName (String 1) */
+            desc_buf[16] = 0x02;/* iProductName (String 2) */
+            desc_buf[17] = 0x03;/* iSerialNumber (String 3) */
+            desc_buf[18] = 0x04;/* iOemID (String 4) */
+            desc_buf[19] = 0x01;/* wManufacturerID MSB (0x01CE) */
+            desc_buf[20] = 0xCE;/* wManufacturerID LSB */
+            desc_buf[21] = 0x16;/* bUD0BaseOffset */
+            desc_buf[22] = 0x1A;/* bUDConfigPLength */
+            desc_buf[23] = 0x02;/* bDeviceRTTCap */
+            desc_buf[24] = 0x00;/* wPeriodicRTCUpdate */
+            desc_buf[25] = 0x00;
+        } else if (idn == QUERY_DESC_IDN_GEOMETRY) {
+            /* Geometry Descriptor (84 bytes) */
+            desc_len = 84;
+            desc_buf[0] = 84;   /* bLength */
+            desc_buf[1] = 0x07; /* bDescriptorType = GEOMETRY */
+            desc_buf[2] = 0x00; /* bMediaTechnology = Normal */
+            /* qTotalRawDeviceCapacity = 32 GB in 512B sectors (0x04000000) */
+            desc_buf[4] = 0x00;
+            desc_buf[5] = 0x00;
+            desc_buf[6] = 0x00;
+            desc_buf[7] = 0x00;
+            desc_buf[8] = 0x04;
+            desc_buf[9] = 0x00;
+            desc_buf[10] = 0x00;
+            desc_buf[11] = 0x00;
+            desc_buf[12] = 0x08; /* bMaxNumberLU = 8 */
+            desc_buf[13] = 0x00; /* dSegmentSize = 128KB */
+            desc_buf[14] = 0x02;
+            desc_buf[15] = 0x00;
+            desc_buf[16] = 0x00;
+            desc_buf[17] = 0x08; /* bAllocationUnitSize = 4MB */
+            desc_buf[18] = 0x08; /* bMinAddrBlockSize = 4KB */
+            desc_buf[19] = 0x08; /* bOptimalReadBlockSize = 4KB */
+            desc_buf[20] = 0x08; /* bOptimalWriteBlockSize = 4KB */
+            desc_buf[21] = 0x08; /* bMaxInBufferSize = 4KB */
+            desc_buf[22] = 0x08; /* bMaxOutBufferSize = 4KB */
+            desc_buf[23] = 0x20; /* bRPMB_ReadWriteSize */
+            desc_buf[24] = 0x00; /* bDynamicCapacityResourcePolicy */
+            desc_buf[25] = 0x00; /* bDataOrdering */
+            desc_buf[26] = 0x08; /* bMaxConLogicalUnitNum = 8 */
+            desc_buf[27] = 0x00; /* bSupportedMemoryTypes */
+        } else if (idn == QUERY_DESC_IDN_UNIT) {
+            /* Unit Descriptor (45 bytes) */
+            desc_len = 45;
+            desc_buf[0] = 45;   /* bLength */
+            desc_buf[1] = 0x02; /* bDescriptorType = UNIT */
+            desc_buf[2] = index;/* bUnitIndex */
+            desc_buf[3] = 0x01; /* bLUEnable = 1 */
+            desc_buf[4] = (index == 0 ? 0x01 : 0x00); /* bBootLunID */
+            desc_buf[5] = 0x00; /* bLUWriteProtect */
+            desc_buf[6] = 0x00; /* bMemoryType */
+            desc_buf[7] = 0x00; /* dNumAllocUnits (16 GB for LUN 0) */
+            desc_buf[8] = 0x00;
+            desc_buf[9] = 0x10;
+            desc_buf[10] = 0x00;
+            desc_buf[11] = 0x00;/* bDataReliability */
+            desc_buf[12] = 0x0C;/* bLogicalBlockSize = 12 (4096 bytes) */
+            /* qLogicalBlockCount = 4,194,304 blocks (16 GB) */
+            desc_buf[13] = 0x00;
+            desc_buf[14] = 0x00;
+            desc_buf[15] = 0x00;
+            desc_buf[16] = 0x00;
+            desc_buf[17] = 0x00;
+            desc_buf[18] = 0x40;
+            desc_buf[19] = 0x00;
+            desc_buf[20] = 0x00;
+        } else if (idn == QUERY_DESC_IDN_STRING) {
+            if (index == 0) {
+                desc_len = 4;
+                desc_buf[0] = 4;
+                desc_buf[1] = 0x05;
+                desc_buf[2] = 0x09; /* 0x0409 English */
+                desc_buf[3] = 0x04;
+            } else if (index == 1) {
+                desc_len = encode_string_desc("Qualcomm Inc.", desc_buf, sizeof(desc_buf));
+            } else if (index == 2) {
+                desc_len = encode_string_desc("UFS 2.1 Android Storage", desc_buf, sizeof(desc_buf));
+            } else if (index == 3) {
+                desc_len = encode_string_desc("QC-UFS-00000001", desc_buf, sizeof(desc_buf));
+            } else {
+                desc_len = encode_string_desc("QCOM-EMU", desc_buf, sizeof(desc_buf));
+            }
+        }
+
+        if (desc_len > 0 && data_dma_addr != 0) {
+            uint32_t write_sz = (data_len < (uint32_t)desc_len) ? data_len : (uint32_t)desc_len;
+            dma_memory_write(&address_space_memory, data_dma_addr, desc_buf, write_sz, MEMTXATTRS_UNSPECIFIED);
+        }
+        break;
+    }
+    case UPIU_QUERY_OPCODE_READ_FLAG: {
+        uint8_t flag_val = 0;
+        if (idn == 0x01) {
+            flag_val = s->flag_fDeviceInit; /* fDeviceInit */
+        }
+        rsp[23] = flag_val;
+        break;
+    }
+    case UPIU_QUERY_OPCODE_SET_FLAG: {
+        if (idn == 0x01) {
+            s->flag_fDeviceInit = 1;
+        }
+        rsp[23] = 1;
+        break;
+    }
+    case UPIU_QUERY_OPCODE_CLEAR_FLAG: {
+        if (idn == 0x01) {
+            s->flag_fDeviceInit = 0;
+        }
+        rsp[23] = 0;
+        break;
+    }
+    case UPIU_QUERY_OPCODE_READ_ATTR: {
+        uint32_t val = 0;
+        if (idn == 0x00) {
+            val = s->attr_bBootLunEn;
+        } else if (idn == 0x01) {
+            val = s->attr_bCurrentPowerMode;
+        }
+        rsp[20] = (val >> 24) & 0xFF;
+        rsp[21] = (val >> 16) & 0xFF;
+        rsp[22] = (val >> 8) & 0xFF;
+        rsp[23] = val & 0xFF;
+        break;
+    }
+    case UPIU_QUERY_OPCODE_WRITE_ATTR: {
+        uint32_t val = ((uint32_t)req[20] << 24) | ((uint32_t)req[21] << 16) |
+                       ((uint32_t)req[22] << 8) | req[23];
+        if (idn == 0x00) {
+            s->attr_bBootLunEn = val & 0xFF;
+        } else if (idn == 0x01) {
+            s->attr_bCurrentPowerMode = val & 0xFF;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/* Helper to write data across PRDT entries */
+static void dma_write_prdt(uint64_t prdt_addr, uint16_t prdt_len, const void *src, size_t total_sz)
+{
+    const uint8_t *p = (const uint8_t *)src;
+    size_t rem = total_sz;
+
+    for (uint16_t i = 0; i < prdt_len && rem > 0; i++) {
+        uint32_t prd[4];
+        if (dma_memory_read(&address_space_memory, prdt_addr + i * 16, prd, 16, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+            break;
+        }
+
+        uint64_t entry_addr = (uint64_t)prd[0] | ((uint64_t)prd[1] << 32);
+        uint32_t entry_len = (prd[3] & 0x3FFFF) + 1;
+        uint32_t chunk = (rem < entry_len) ? (uint32_t)rem : entry_len;
+
+        dma_memory_write(&address_space_memory, entry_addr, p, chunk, MEMTXATTRS_UNSPECIFIED);
+
+        p += chunk;
+        rem -= chunk;
+    }
+}
+
+/* Handle SCSI Command UPIU */
+static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
+                                uint64_t prdt_addr, uint16_t prdt_len)
+{
+    (void)s;
+    uint8_t cdb_op = req[16];
+    uint8_t lun = req[2];
+
+    memset(rsp, 0, 32);
+    rsp[0] = UPIU_TRANSACTION_RESPONSE; /* 0x21 */
+    rsp[1] = 0x00;                      /* Flags */
+    rsp[2] = lun;                       /* LUN */
+    rsp[3] = req[3];                    /* Task Tag */
+    rsp[6] = 0x00;                      /* Target Status: SUCCESS (0x00) */
+    rsp[7] = 0x00;                      /* SAM Status: GOOD (0x00) */
+
+    switch (cdb_op) {
+    case SCSI_INQUIRY: {
+        uint8_t inq[36];
+        memset(inq, 0, sizeof(inq));
+        inq[0] = 0x00; /* Direct Access Block Device */
+        inq[1] = 0x00; /* RMB = 0 */
+        inq[2] = 0x06; /* SPC-4 */
+        inq[3] = 0x02; /* Response format */
+        inq[4] = 31;   /* Additional length */
+        memcpy(&inq[8],  "QCOM    ", 8);
+        memcpy(&inq[16], "UFS 2.1 DISK    ", 16);
+        memcpy(&inq[32], "0001", 4);
+
+        dma_write_prdt(prdt_addr, prdt_len, inq, sizeof(inq));
+        break;
+    }
+    case SCSI_TEST_UNIT_READY:
+    case SCSI_START_STOP_UNIT:
+    case SCSI_SYNCHRONIZE_CACHE:
+        /* Already SUCCESS / GOOD */
+        break;
+    case SCSI_MODE_SENSE_6: {
+        uint8_t mode6[4] = { 3, 0, 0, 0 };
+        dma_write_prdt(prdt_addr, prdt_len, mode6, sizeof(mode6));
+        break;
+    }
+    case SCSI_MODE_SENSE_10: {
+        uint8_t mode10[8] = { 0, 6, 0, 0, 0, 0, 0, 0 };
+        dma_write_prdt(prdt_addr, prdt_len, mode10, sizeof(mode10));
+        break;
+    }
+    case SCSI_READ_CAPACITY_10: {
+        uint8_t cap[8];
+        /* 33,554,431 blocks (16GB) = 0x01FFFFFF */
+        cap[0] = 0x01; cap[1] = 0xFF; cap[2] = 0xFF; cap[3] = 0xFF;
+        /* Block size = 512 bytes = 0x00000200 */
+        cap[4] = 0x00; cap[5] = 0x00; cap[6] = 0x02; cap[7] = 0x00;
+
+        dma_write_prdt(prdt_addr, prdt_len, cap, sizeof(cap));
+        break;
+    }
+    case SCSI_READ_CAPACITY_16: {
+        uint8_t cap16[32];
+        memset(cap16, 0, sizeof(cap16));
+        /* Returned Logical Block Address: 0x0000000001FFFFFF */
+        cap16[4] = 0x01; cap16[5] = 0xFF; cap16[6] = 0xFF; cap16[7] = 0xFF;
+        /* Block Length: 512 = 0x00000200 */
+        cap16[8] = 0x00; cap16[9] = 0x00; cap16[10] = 0x02; cap16[11] = 0x00;
+
+        dma_write_prdt(prdt_addr, prdt_len, cap16, sizeof(cap16));
+        break;
+    }
+    case SCSI_REPORT_LUNS: {
+        uint8_t luns[16];
+        memset(luns, 0, sizeof(luns));
+        luns[3] = 8; /* LUN List Length = 8 bytes (1 LUN) */
+        /* LUN 0 = 0x0000000000000000 */
+        dma_write_prdt(prdt_addr, prdt_len, luns, sizeof(luns));
+        break;
+    }
+    case SCSI_READ_10:
+    case SCSI_READ_16: {
+        uint64_t lba = 0;
+        if (cdb_op == SCSI_READ_10) {
+            lba = ((uint64_t)req[18] << 24) | ((uint64_t)req[19] << 16) |
+                  ((uint64_t)req[20] << 8) | req[21];
+        } else {
+            lba = ((uint64_t)req[18] << 56) | ((uint64_t)req[19] << 48) |
+                  ((uint64_t)req[20] << 40) | ((uint64_t)req[21] << 32) |
+                  ((uint64_t)req[22] << 24) | ((uint64_t)req[23] << 16) |
+                  ((uint64_t)req[24] << 8) | req[25];
+        }
+
+        uint8_t sec_buf[512];
+        memset(sec_buf, 0, sizeof(sec_buf));
+
+        if (lba == 0) {
+            /* Protective MBR */
+            sec_buf[446 + 4] = 0xEE; /* GPT Protective */
+            sec_buf[446 + 8] = 0x01; /* Starting LBA 1 */
+            sec_buf[446 + 12] = 0xFF; sec_buf[446 + 13] = 0xFF; sec_buf[446 + 14] = 0xFF; sec_buf[446 + 15] = 0x01;
+            sec_buf[510] = 0x55;
+            sec_buf[511] = 0xAA;
+            dma_write_prdt(prdt_addr, prdt_len, sec_buf, sizeof(sec_buf));
+        } else if (lba == 1) {
+            /* GPT Header */
+            memcpy(&sec_buf[0], "EFI PART", 8);
+            sec_buf[8] = 0x00; sec_buf[9] = 0x00; sec_buf[10] = 0x01; sec_buf[11] = 0x00; /* Revision 1.0 */
+            sec_buf[12] = 0x5C; /* Header size = 92 bytes */
+            /* Current LBA = 1 */
+            sec_buf[24] = 0x01;
+            /* Backup LBA = 33554431 (0x01FFFFFF) */
+            sec_buf[32] = 0xFF; sec_buf[33] = 0xFF; sec_buf[34] = 0xFF; sec_buf[35] = 0x01;
+            /* First Usable LBA = 34 */
+            sec_buf[40] = 0x22;
+            /* Last Usable LBA = 33554398 */
+            sec_buf[48] = 0xDE; sec_buf[49] = 0xFF; sec_buf[50] = 0xFF; sec_buf[51] = 0x01;
+            /* Partition entries starting LBA = 2 */
+            sec_buf[72] = 0x02;
+            /* Number of partition entries = 128 */
+            sec_buf[80] = 0x80;
+            /* Size of partition entry = 128 bytes */
+            sec_buf[84] = 0x80;
+            dma_write_prdt(prdt_addr, prdt_len, sec_buf, sizeof(sec_buf));
+        } else if (lba == 2) {
+            /* Partition Table (Entries 0..3) */
+            /* Entry 0: "system" (LBA 2048 to 4194303 = 2 GB) */
+            sec_buf[0] = 0xAF; sec_buf[1] = 0x3D; sec_buf[2] = 0xC6; sec_buf[3] = 0x0F; /* Linux root GUID */
+            sec_buf[4] = 0x83; sec_buf[5] = 0xB7; sec_buf[6] = 0x4D; sec_buf[7] = 0x4C;
+            sec_buf[8] = 0x8E; sec_buf[9] = 0x99; sec_buf[10] = 0x44; sec_buf[11] = 0xA0;
+            sec_buf[12] = 0x54; sec_buf[13] = 0x60; sec_buf[14] = 0x97; sec_buf[15] = 0xC7;
+            /* Starting LBA = 2048 (0x00000800) */
+            sec_buf[32] = 0x00; sec_buf[33] = 0x08;
+            /* Ending LBA = 4194303 (0x003FFFFF) */
+            sec_buf[40] = 0xFF; sec_buf[41] = 0xFF; sec_buf[42] = 0x3F;
+            /* Partition name: "system" in UTF-16LE at offset 56 */
+            encode_string_desc("system", &sec_buf[56 - 2], 72);
+
+            /* Entry 1: "userdata" (LBA 4194304 to 33554398 = ~14 GB) */
+            sec_buf[128 + 0] = 0xAF; sec_buf[128 + 1] = 0x3D; sec_buf[128 + 2] = 0xC6; sec_buf[128 + 3] = 0x0F;
+            sec_buf[128 + 4] = 0x83; sec_buf[128 + 5] = 0xB7; sec_buf[128 + 6] = 0x4D; sec_buf[128 + 7] = 0x4C;
+            sec_buf[128 + 8] = 0x8E; sec_buf[128 + 9] = 0x99; sec_buf[128 + 10] = 0x44; sec_buf[128 + 11] = 0xA0;
+            sec_buf[128 + 12] = 0x54; sec_buf[128 + 13] = 0x60; sec_buf[128 + 14] = 0x97; sec_buf[128 + 15] = 0xC7;
+            /* Starting LBA = 4194304 (0x00400000) */
+            sec_buf[128 + 32] = 0x00; sec_buf[128 + 33] = 0x00; sec_buf[128 + 34] = 0x40;
+            /* Ending LBA = 33554398 (0x01FFFFDE) */
+            sec_buf[128 + 40] = 0xDE; sec_buf[128 + 41] = 0xFF; sec_buf[128 + 42] = 0xFF; sec_buf[128 + 43] = 0x01;
+            /* Partition name: "userdata" in UTF-16LE at offset 56 */
+            encode_string_desc("userdata", &sec_buf[128 + 56 - 2], 72);
+
+            dma_write_prdt(prdt_addr, prdt_len, sec_buf, sizeof(sec_buf));
+        } else {
+            /* Zero-filled data for remaining blocks */
+            for (uint16_t i = 0; i < prdt_len; i++) {
+                uint32_t prd[4];
+                if (dma_memory_read(&address_space_memory, prdt_addr + i * 16, prd, 16, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+                    break;
+                }
+                uint64_t entry_addr = (uint64_t)prd[0] | ((uint64_t)prd[1] << 32);
+                uint32_t entry_len = (prd[3] & 0x3FFFF) + 1;
+                uint8_t zero_buf[4096];
+                memset(zero_buf, 0, sizeof(zero_buf));
+                uint32_t rem = entry_len;
+                uint64_t cur = entry_addr;
+                while (rem > 0) {
+                    uint32_t chunk = (rem < sizeof(zero_buf)) ? rem : (uint32_t)sizeof(zero_buf);
+                    dma_memory_write(&address_space_memory, cur, zero_buf, chunk, MEMTXATTRS_UNSPECIFIED);
+                    cur += chunk;
+                    rem -= chunk;
+                }
+            }
+        }
+        break;
+    }
+    case SCSI_WRITE_10:
+    case SCSI_WRITE_16:
+        /* Successfully absorbed writes */
+        break;
+    default:
+        break;
+    }
+}
+
+/* Process UTP Transfer Requests on REG_UTRLDBR write */
+static void process_utp_transfers(QcomUfsState *s, uint32_t doorbell)
+{
+    uint32_t utrdl_ba_l = *(uint32_t *)(s->ufshc_regs + REG_UTRLBA);
+    uint32_t utrdl_ba_u = *(uint32_t *)(s->ufshc_regs + REG_UTRLBAU);
+    uint64_t utrdl_base = (uint64_t)utrdl_ba_l | ((uint64_t)utrdl_ba_u << 32);
+
+    for (int slot = 0; slot < 32; slot++) {
+        if (!(doorbell & (1U << slot))) {
+            continue;
+        }
+
+        uint64_t utrd_addr = utrdl_base + slot * 32;
+        uint32_t utrd[8];
+        if (dma_memory_read(&address_space_memory, utrd_addr, utrd, 32, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+            continue;
+        }
+
+        uint32_t ucd_ba_l = utrd[4];
+        uint32_t ucd_ba_u = utrd[5];
+        uint64_t ucd_base = (uint64_t)ucd_ba_l | ((uint64_t)ucd_ba_u << 32);
+
+        uint64_t resp_offset = ((uint64_t)((utrd[6] >> 16) & 0xFFFF)) << 2;
+        uint64_t prdt_offset = ((uint64_t)((utrd[7] >> 16) & 0xFFFF)) << 2;
+        uint16_t prdt_len    = utrd[7] & 0xFFFF;
+
+        if (resp_offset == 0) {
+            resp_offset = 512;
+        }
+        if (prdt_offset == 0) {
+            prdt_offset = 1024;
+        }
+
+        uint64_t prdt_addr = ucd_base + prdt_offset;
+
+        /* Read Command UPIU (32 bytes) */
+        uint8_t cmd_upiu[32];
+        uint8_t resp_upiu[32];
+        memset(resp_upiu, 0, sizeof(resp_upiu));
+
+        if (dma_memory_read(&address_space_memory, ucd_base, cmd_upiu, 32, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+            continue;
+        }
+
+        uint8_t trans_type = cmd_upiu[0] & 0x3F;
+
+        if (trans_type == UPIU_TRANSACTION_NOP_OUT) {
+            resp_upiu[0] = UPIU_TRANSACTION_NOP_IN; /* 0x20 */
+            resp_upiu[1] = 0x00;
+            resp_upiu[2] = cmd_upiu[2]; /* LUN */
+            resp_upiu[3] = cmd_upiu[3]; /* Task Tag */
+            resp_upiu[6] = 0x00; /* Target SUCCESS */
+            resp_upiu[7] = 0x00; /* Device SUCCESS */
+        } else if (trans_type == UPIU_TRANSACTION_QUERY_REQ) {
+            uint64_t desc_data_addr = ucd_base + resp_offset + 32;
+            handle_query_request(s, cmd_upiu, resp_upiu, desc_data_addr, 256);
+        } else if (trans_type == UPIU_TRANSACTION_COMMAND) {
+            handle_scsi_command(s, cmd_upiu, resp_upiu, prdt_addr, prdt_len);
+        }
+
+        /* Write Response UPIU to guest memory */
+        uint64_t resp_addr = ucd_base + resp_offset;
+        dma_memory_write(&address_space_memory, resp_addr, resp_upiu, 32, MEMTXATTRS_UNSPECIFIED);
+
+        /* Set OCS = 0 (OCS_SUCCESS) in UTRD */
+        utrd[2] = 0x00000000U;
+        dma_memory_write(&address_space_memory, utrd_addr + 8, &utrd[2], 4, MEMTXATTRS_UNSPECIFIED);
+    }
+
+    /* Clear doorbell bits */
+    *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR) &= ~doorbell;
+
+    /* Set Transfer Request Completion Status bit */
+    *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS) |= INT_UTRCS;
+    qcom_ufs_update_irq(s);
+}
+
+/* Process Task Management Requests on REG_UTMRLDBR write */
+static void process_task_mgmt_transfers(QcomUfsState *s, uint32_t doorbell)
+{
+    uint32_t utmrl_ba_l = *(uint32_t *)(s->ufshc_regs + REG_UTMRLBA);
+    uint32_t utmrl_ba_u = *(uint32_t *)(s->ufshc_regs + REG_UTMRLBAU);
+    uint64_t utmrl_base = (uint64_t)utmrl_ba_l | ((uint64_t)utmrl_ba_u << 32);
+
+    for (int slot = 0; slot < 8; slot++) {
+        if (!(doorbell & (1U << slot))) {
+            continue;
+        }
+
+        uint64_t utmrd_addr = utmrl_base + slot * 32;
+        uint32_t utmrd[8];
+        if (dma_memory_read(&address_space_memory, utmrd_addr, utmrd, 32, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+            continue;
+        }
+
+        /* Write SUCCESS to Task Management Request OCS */
+        utmrd[2] = 0x00000000U;
+        dma_memory_write(&address_space_memory, utmrd_addr + 8, &utmrd[2], 4, MEMTXATTRS_UNSPECIFIED);
+    }
+
+    *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR) &= ~doorbell;
+    *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS) |= INT_UTMRCS;
+    qcom_ufs_update_irq(s);
+}
+
 /* UFSHCI Host Controller MMIO */
 static uint64_t qcom_ufshc_read(void *opaque, hwaddr offset, unsigned size)
 {
@@ -266,16 +828,12 @@ static void qcom_ufshc_write(void *opaque, hwaddr offset, uint64_t value, unsign
             handle_uic_command(s, val);
             return;
         } else if (offset == REG_UTRLDBR) {
-            /* Process transfer requests (NOP / Query / SCSI) */
-            *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR) = 0;
-            *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS) |= INT_UTRCS;
-            qcom_ufs_update_irq(s);
+            *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR) = val;
+            process_utp_transfers(s, val);
             return;
         } else if (offset == REG_UTMRLDBR) {
-            /* Task Management Request */
-            *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR) = 0;
-            *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS) |= INT_UTMRCS;
-            qcom_ufs_update_irq(s);
+            *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR) = val;
+            process_task_mgmt_transfers(s, val);
             return;
         }
 
@@ -311,10 +869,8 @@ static uint64_t qcom_ufsphy_read(void *opaque, hwaddr offset, unsigned size)
      * Returns Bit 0 = 1 (PCS_READY = 1) so phy_power_on() completes instantly.
      */
     if ((offset & 0x1FF) == 0x170 || offset == 0x170 || offset == 0x370 || offset == 0x570) {
-        return 0x00000001U;
-    }
-
-    if (size == 4) {
+        val = 0x00000001U;
+    } else if (size == 4) {
         val = *(uint32_t *)(s->ufsphy_regs + offset);
     } else {
         memcpy(&val, s->ufsphy_regs + offset, size);
@@ -432,6 +988,11 @@ static void qcom_ufs_reset(DeviceState *dev)
     s->pa_tx_gear = 1;
     s->pa_rx_gear = 1;
     s->pa_hs_series = 2; /* Series B */
+
+    /* Device Attributes and Flags */
+    s->flag_fDeviceInit = 0;
+    s->attr_bBootLunEn = 1;
+    s->attr_bCurrentPowerMode = 0x11;
 }
 
 static void qcom_ufs_realize(DeviceState *dev, Error **errp)
