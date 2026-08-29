@@ -444,6 +444,25 @@ static void handle_query_request(QcomUfsState *s, uint64_t ucd_base, uint8_t *cm
       desc_buf[21] = 0x01; /* bMaxInBufferSize = 1 */
       desc_buf[22] = 0x01; /* bMaxOutBufferSize = 1 */
       desc_buf[23] = 0x00; /* dRPMB_ReadWriteSize = 0 */
+    } else if (idn == 5 /* STRING */) {
+      if (index == 0) {
+        /* Language ID: 0x0409 (English) */
+        desc_len = 4;
+        desc_buf[0] = 4;
+        desc_buf[1] = 0x05;
+        desc_buf[2] = 0x09;
+        desc_buf[3] = 0x04;
+      } else if (index == 1) {
+        desc_len = encode_string_desc("SAMSUNG", desc_buf, sizeof(desc_buf));
+      } else if (index == 2) {
+        desc_len = encode_string_desc("KLMCG8GEND-B031", desc_buf, sizeof(desc_buf));
+      } else if (index == 3) {
+        desc_len = encode_string_desc("1234567890", desc_buf, sizeof(desc_buf));
+      } else if (index == 4) {
+        desc_len = encode_string_desc("QUALCOMM", desc_buf, sizeof(desc_buf));
+      } else {
+        desc_len = encode_string_desc("GENERIC_UFS", desc_buf, sizeof(desc_buf));
+      }
     } else {
       desc_len = 32;
       desc_buf[0] = 32;
@@ -738,6 +757,18 @@ static void dma_read_disk(uint8_t lun, uint64_t start_lba, uint32_t num_blocks,
       }
 
       dma_memory_write(&address_space_memory, entry_addr + chunk_done, buf, actual_read, MEMTXATTRS_UNSPECIFIED);
+
+      /* For LBA 1 (GPT header), dump the first 64 bytes served so we can verify EFI PART */
+      if (curr_lba == 1 && chunk_done == 0) {
+        uint32_t dump_len = actual_read < 64 ? actual_read : 64;
+        ufs_log("[GPT_HDR_DUMP] lun=%u first %u bytes of LBA 1 served to guest:", lun, dump_len);
+        for (uint32_t _di = 0; _di < dump_len; _di++) ufs_log(" %02x", buf[_di]);
+        ufs_log("\n");
+        /* Also log as ASCII for the EFI PART signature */
+        ufs_log("[GPT_HDR_SIG] bytes[0..7] = '%c%c%c%c%c%c%c%c'\n",
+                buf[0],buf[1],buf[2],buf[3],buf[4],buf[5],buf[6],buf[7]);
+      }
+
       chunk_done += actual_read;
       chunk_rem -= actual_read;
     }
@@ -756,7 +787,27 @@ static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
   uint8_t scsi_op = req[16];
   uint8_t lun = req[2];
 
-  ufs_log("[UFS_SCSI] op=0x%02x, lun=%u\n", scsi_op, lun);
+  /* Decode READ(10)/READ(16)/WRITE(10)/WRITE(16) LBA + transfer-length for the log */
+  if (scsi_op == SCSI_READ_10 || scsi_op == SCSI_WRITE_10) {
+    uint64_t _lba = ((uint64_t)req[18] << 24) | ((uint64_t)req[19] << 16) |
+                    ((uint64_t)req[20] << 8)  |  (uint64_t)req[21];
+    uint32_t _nb  = ((uint32_t)req[23] << 8)  |  (uint32_t)req[24];
+    ufs_log("[UFS_SCSI] op=0x%02x(%s), lun=%u, lba=%" PRIu64 ", blocks=%u, prdt_len=%u\n",
+            scsi_op, (scsi_op == SCSI_READ_10 ? "READ10" : "WRITE10"),
+            lun, _lba, _nb, prdt_len);
+  } else if (scsi_op == SCSI_READ_16 || scsi_op == SCSI_WRITE_16) {
+    uint64_t _lba = ((uint64_t)req[18] << 56) | ((uint64_t)req[19] << 48) |
+                    ((uint64_t)req[20] << 40) | ((uint64_t)req[21] << 32) |
+                    ((uint64_t)req[22] << 24) | ((uint64_t)req[23] << 16) |
+                    ((uint64_t)req[24] << 8)  |  (uint64_t)req[25];
+    uint32_t _nb  = ((uint32_t)req[26] << 24) | ((uint32_t)req[27] << 16) |
+                    ((uint32_t)req[28] << 8)  |  (uint32_t)req[29];
+    ufs_log("[UFS_SCSI] op=0x%02x(%s), lun=%u, lba=%" PRIu64 ", blocks=%u, prdt_len=%u\n",
+            scsi_op, (scsi_op == SCSI_READ_16 ? "READ16" : "WRITE16"),
+            lun, _lba, _nb, prdt_len);
+  } else {
+    ufs_log("[UFS_SCSI] op=0x%02x, lun=%u\n", scsi_op, lun);
+  }
 
   memset(rsp, 0, 32);
   rsp[0] = UPIU_TRANSACTION_RESPONSE; /* 0x21 */
@@ -1188,11 +1239,11 @@ static void qcom_ufshc_write(void *opaque, hwaddr offset, uint64_t val,
       return;
     } else if (offset == REG_UTRLDBR) {
       *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR) |= (uint32_t)val;
-      qemu_bh_schedule(s->transfer_bh);
+      process_utp_transfers(s, (uint32_t)val);
       return;
     } else if (offset == REG_UTMRLDBR) {
       *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR) |= (uint32_t)val;
-      qemu_bh_schedule(s->tm_bh);
+      process_task_mgmt_transfers(s, (uint32_t)val);
       return;
     } else if (offset == REG_HOST_CONTROLLER_ENABLE) {
       if (val & 1) {
