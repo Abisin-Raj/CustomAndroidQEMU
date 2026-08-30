@@ -112,26 +112,17 @@ static uint64_t qcom_gcc_sm6150_read(void *opaque, hwaddr offset, unsigned size)
     switch (size) {
     case 4:
         val = *(uint32_t *)(s->regs + offset);
-        if (is_ufs_cbcr(offset)) {
+        if (offset >= 0x77000 && offset <= 0x770ff) {
             /*
-             * Qualcomm UFS Branch Control Register (CBCR):
-             * If enabled (bit 0 set), bit 31 (CLK_OFF) is 0 (running).
-             * If disabled (bit 0 clear), bit 31 (CLK_OFF) is 1 (gated/off).
-             * Guarantees both enable and disable checks succeed instantly without timeout.
-             */
-            if (val & 1) {
-                val &= ~0xF0000000U;
-            } else {
-                val = (val & ~0xF0000000U) | 0x80000000U;
-            }
-        } else if (is_ufs_rcg_cmd(offset)) {
-            /*
-             * Qualcomm RCG2 Command Register (CMD_RCGR):
-             * Bit  0: UPDATE = 0 (Hardware completed frequency/parent update)
-             * Bit  1: ROOT_EN = 1 (Root clock generator is enabled)
-             * Bit 31: ROOT_OFF = 0 (Root generator is active/not off)
+             * All Qualcomm UFS Clock Registers (RCG2s and CBCRs) in 0x77000..0x770ff:
+             *   Bit  0: UPDATE = 0 (Hardware completed update)
+             *   Bit  1: ROOT_EN = 1 (Root clock generator is active)
+             *   Bit 31: ROOT_OFF / CLK_OFF = 0 (Clock is running, not off)
              */
             val = (val | 0x00000002U) & ~0x80000001U;
+        } else if (offset == 0x8c000) {
+            /* UFS Reference Clock CBCR */
+            val &= ~0x80000000U;
         }
         break;
     case 8:
@@ -168,21 +159,11 @@ static void qcom_gcc_sm6150_write(void *opaque, hwaddr offset,
             val |= PLL_MODE_LOCKED;
         } else if (is_vote_reg(offset)) {
             /* Voting registers (APCS_*_ENA_VOTE): store exact bitmask */
-        } else if (is_ufs_cbcr(offset)) {
-            /*
-             * Model Qualcomm Branch Control Register (CBCR) hardware behavior:
-             *   Bit  0: CLK_ENABLE (1 = enable, 0 = disable)
-             *   Bit 31: CLK_OFF    (0 = running, 1 = gated/off)
-             *   Bits [30:28]: NOC FSM status (0 = ON, 2 = OFF)
-             */
-            if (val & 1) {
-                val &= ~0xF0000000U;
-            } else {
-                val = (val & ~0xF0000000U) | 0x80000000U;
-            }
-        } else if (is_ufs_rcg_cmd(offset)) {
-            /* Auto-clear UPDATE bit on write and ensure ROOT_OFF = 0 */
+        } else if (offset >= 0x77000 && offset <= 0x770ff) {
+            /* Auto-clear UPDATE bit on write and ensure ROOT_OFF / CLK_OFF = 0 */
             val &= ~0x80000001U;
+        } else if (offset == 0x8c000) {
+            val &= ~0x80000000U;
         }
 
         *(uint32_t *)(s->regs + offset) = val;
