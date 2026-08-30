@@ -115,18 +115,23 @@ static uint64_t qcom_gcc_sm6150_read(void *opaque, hwaddr offset, unsigned size)
         if (is_ufs_cbcr(offset)) {
             /*
              * Qualcomm UFS Branch Control Register (CBCR):
-             * Bit 0: CLK_ENABLE / HWCG mode active.
-             * Bit 31: CLK_OFF = 0 (running).
-             * Guarantees all kernel clock enable/disable/hwcg checks succeed instantly.
+             * If enabled (bit 0 set), bit 31 (CLK_OFF) is 0 (running).
+             * If disabled (bit 0 clear), bit 31 (CLK_OFF) is 1 (gated/off).
+             * Guarantees both enable and disable checks succeed instantly without timeout.
              */
-            return 0x00000001U;
+            if (val & 1) {
+                val &= ~0xF0000000U;
+            } else {
+                val = (val & ~0xF0000000U) | 0x80000000U;
+            }
         } else if (is_ufs_rcg_cmd(offset)) {
             /*
              * Qualcomm RCG2 Command Register (CMD_RCGR):
-             * Bit  0: UPDATE = 0 (Hardware completed update)
-             * Bit 31: ROOT_OFF = 0 (Root generator is active)
+             * Bit  0: UPDATE = 0 (Hardware completed frequency/parent update)
+             * Bit  1: ROOT_EN = 1 (Root clock generator is enabled)
+             * Bit 31: ROOT_OFF = 0 (Root generator is active/not off)
              */
-            val &= ~0x80000001U;
+            val = (val | 0x00000002U) & ~0x80000001U;
         }
         break;
     case 8:

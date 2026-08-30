@@ -21,7 +21,7 @@
 static FILE *ufs_log_file = NULL;
 static void ufs_log(const char *fmt, ...) {
   if (!ufs_log_file) {
-    ufs_log_file = fopen("C:\\qemu_work\\ufs_debug.log", "w");
+    ufs_log_file = fopen("C:\\qemu_work\\ufs_debug.log", "a");
   }
   if (ufs_log_file) {
     va_list ap;
@@ -171,6 +171,7 @@ struct QcomUfsState {
   uint32_t pa_tx_gear;
   uint32_t pa_rx_gear;
   uint32_t pa_hs_series;
+  uint32_t pa_pwr_mode;
 
   /* Device Flags & Attributes */
   uint8_t flag_fDeviceInit;
@@ -207,6 +208,8 @@ static uint32_t get_uic_attr(QcomUfsState *s, uint32_t attr_sel) {
     return s->pa_rx_gear;
   case 0x156A: /* PA_HSSeries */
     return s->pa_hs_series;
+  case 0x1571: /* PA_PWRMODE */
+    return s->pa_pwr_mode ? s->pa_pwr_mode : 0x11;
   case 0x1569: /* PA_TxTermination */
   case 0x1589: /* PA_RxTermination */
     return 1;
@@ -245,6 +248,9 @@ static void set_uic_attr(QcomUfsState *s, uint32_t attr_sel, uint32_t val) {
   case 0x156A: /* PA_HSSeries */
     s->pa_hs_series = val;
     break;
+  case 0x1571: /* PA_PWRMODE */
+    s->pa_pwr_mode = val;
+    break;
   default:
     break;
   }
@@ -256,6 +262,9 @@ static void handle_uic_command(QcomUfsState *s, uint32_t cmd) {
   uint32_t arg3 = *(uint32_t *)(s->ufshc_regs + REG_UICCMDARG3);
   uint32_t is = *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS);
 
+  /* Default UIC Command Result: Success (0) */
+  *(uint32_t *)(s->ufshc_regs + REG_UICCMDARG2) = 0;
+
   switch (cmd_op) {
   case UIC_CMD_DME_GET:
   case UIC_CMD_DME_PEER_GET:
@@ -264,16 +273,27 @@ static void handle_uic_command(QcomUfsState *s, uint32_t cmd) {
   case UIC_CMD_DME_SET:
   case UIC_CMD_DME_PEER_SET:
     set_uic_attr(s, arg1, arg3);
+    if (((arg1 >> 16) & 0xFFFF) == 0x1571) {
+      /* Power mode change requested: assert UIC Power Mode Status */
+      is |= INT_UPMS;
+      /* Set UPMCRS = PWR_OK (1 << 8) in REG_HOST_CONTROLLER_STATUS */
+      *(uint32_t *)(s->ufshc_regs + REG_HOST_CONTROLLER_STATUS) =
+          (*(uint32_t *)(s->ufshc_regs + REG_HOST_CONTROLLER_STATUS) & ~(7U << 8)) | (1U << 8);
+    }
     break;
   case UIC_CMD_DME_LINK_STARTUP:
     /* UniPro link startup successful: set status bits */
     is |= INT_ULSS; /* UniPro Link Startup Status */
     break;
+  case UIC_CMD_DME_HIBERN8_ENTER:
+    is |= INT_UHES;
+    break;
+  case UIC_CMD_DME_HIBERN8_EXIT:
+    is |= INT_UHXS;
+    break;
   case UIC_CMD_DME_RESET:
   case UIC_CMD_DME_ENABLE:
   case UIC_CMD_DME_POWERON:
-  case UIC_CMD_DME_HIBERN8_ENTER:
-  case UIC_CMD_DME_HIBERN8_EXIT:
     break;
   default:
     break;
@@ -806,7 +826,7 @@ static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
             scsi_op, (scsi_op == SCSI_READ_16 ? "READ16" : "WRITE16"),
             lun, _lba, _nb, prdt_len);
   } else {
-    ufs_log("[UFS_SCSI] op=0x%02x, lun=%u\n", scsi_op, lun);
+    ufs_log("[UFS_SCSI] op=0x%02x, lun=%u, tag=0x%02x, prdt_len=%u\n", scsi_op, lun, req[3], prdt_len);
   }
 
   memset(rsp, 0, 32);
@@ -822,6 +842,50 @@ static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
   dma_memory_write(&address_space_memory, ucd_base + resp_offset + 32,
                    &zero_sense, 4, MEMTXATTRS_UNSPECIFIED);
 
+  bool is_wlun = (lun & 0x80) || lun == 0x50 || lun == 0x30 || lun == 0x44 || lun == 0x60;
+
+  if (is_wlun) {
+    if (scsi_op == SCSI_INQUIRY) {
+      uint8_t inq[36];
+      memset(inq, 0, sizeof(inq));
+      inq[0] = 0x1E; /* Connected, Well-Known Logical Unit (1Eh) */
+      inq[1] = 0x00;
+      inq[2] = 0x06; /* SPC-4 / UFS 2.1 standard */
+      inq[3] = 0x02; /* Response data format */
+      inq[4] = 31;   /* Additional length = 31 bytes */
+      memcpy(&inq[8], "SAMSUNG ", 8);
+      memcpy(&inq[16], "KLMCG8GEND-B031 ", 16);
+      memcpy(&inq[32], "0200", 4);
+      rsp[6] = 0x00; /* Target SUCCESS */
+      rsp[7] = 0x00; /* SAM Status: GOOD */
+      dma_write_prdt(ucd_base, resp_offset, prdt_addr, prdt_len, rsp, inq, sizeof(inq));
+      ufs_log("[UFS_SCSI_RECORD] LUN=%u, Opcode=0x%02x, Tag=0x%02x, SAM_Status=0x%02x, Result=0x%02x\n",
+              lun, scsi_op, req[3], rsp[7], rsp[6]);
+      return;
+    } else if (scsi_op == SCSI_REPORT_LUNS) {
+      /* Report 2 regular LUNs: LUN 0 and LUN 1 */
+      uint8_t r_luns[24];
+      memset(r_luns, 0, sizeof(r_luns));
+      r_luns[3] = 16; /* LUN List Length = 16 bytes (2 LUN entries) */
+      /* LUN 0: 00 00 00 00 00 00 00 00 */
+      /* LUN 1: 00 01 00 00 00 00 00 00 */
+      r_luns[8] = 0x00;
+      r_luns[9] = 0x01;
+      rsp[6] = 0x00;
+      rsp[7] = 0x00;
+      dma_write_prdt(ucd_base, resp_offset, prdt_addr, prdt_len, rsp, r_luns, sizeof(r_luns));
+      ufs_log("[UFS_SCSI_RECORD] LUN=%u, Opcode=0x%02x, Tag=0x%02x, SAM_Status=0x%02x, Result=0x%02x\n",
+              lun, scsi_op, req[3], rsp[7], rsp[6]);
+      return;
+    }
+    /* Any other command on WLUN (TEST_UNIT_READY, START_STOP, etc.) succeeds */
+    rsp[6] = 0x00;
+    rsp[7] = 0x00;
+    ufs_log("[UFS_SCSI_RECORD] LUN=%u, Opcode=0x%02x, Tag=0x%02x, SAM_Status=0x%02x, Result=0x%02x\n",
+            lun, scsi_op, req[3], rsp[7], rsp[6]);
+    return;
+  }
+
   if (lun >= 2) {
     if (scsi_op == SCSI_INQUIRY) {
       uint8_t inq[36];
@@ -834,6 +898,8 @@ static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
       rsp[6] = 0x00; /* Target SUCCESS */
       rsp[7] = 0x00; /* SAM Status: GOOD */
       dma_write_prdt(ucd_base, resp_offset, prdt_addr, prdt_len, rsp, inq, sizeof(inq));
+      ufs_log("[UFS_SCSI_RECORD] LUN=%u, Opcode=0x%02x, Tag=0x%02x, SAM_Status=0x%02x, Result=0x%02x\n",
+              lun, scsi_op, req[3], rsp[7], rsp[6]);
       return;
     }
 
@@ -853,6 +919,8 @@ static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
 
     dma_memory_write(&address_space_memory, ucd_base + resp_offset + 32,
                      sense, sizeof(sense), MEMTXATTRS_UNSPECIFIED);
+    ufs_log("[UFS_SCSI_RECORD] LUN=%u, Opcode=0x%02x, Tag=0x%02x, SAM_Status=0x%02x, Result=0x%02x\n",
+            lun, scsi_op, req[3], rsp[7], rsp[6]);
     return;
   }
 
@@ -1012,6 +1080,8 @@ static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
   default:
     break;
   }
+  ufs_log("[UFS_SCSI_RECORD] LUN=%u, Opcode=0x%02x, Tag=0x%02x, SAM_Status=0x%02x, Result=0x%02x\n",
+          lun, scsi_op, req[3], rsp[7], rsp[6]);
 }
 
 /* Process UTP Transfer Requests on REG_UTRLDBR write */
