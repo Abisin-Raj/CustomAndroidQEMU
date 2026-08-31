@@ -154,6 +154,8 @@ struct QcomUfsState {
 
   QEMUBH *transfer_bh;
   QEMUBH *tm_bh;
+  QEMUTimer *transfer_timer;
+  QEMUTimer *tm_timer;
   uint32_t pending_utrl_doorbell;
   uint32_t pending_utmrl_doorbell;
 
@@ -183,6 +185,8 @@ struct QcomUfsState {
 static void qcom_ufs_update_irq(QcomUfsState *s) {
   uint32_t status = *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS);
   uint32_t enable = *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_ENABLE);
+  ufs_log("[UFS_IRQ] qcom_ufs_update_irq: status=0x%x, enable=0x%x, irq_level=%d\n",
+          status, enable, (status & enable) ? 1 : 0);
   qemu_set_irq(s->irq, (status & enable) ? 1 : 0);
 }
 
@@ -1263,6 +1267,7 @@ static void qcom_ufs_transfer_bh(void *opaque) {
   QcomUfsState *s = QCOM_UFSHC(opaque);
   uint32_t doorbell = *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR);
 
+  ufs_log("[UFS_BH] qcom_ufs_transfer_bh running, doorbell=0x%08x\n", doorbell);
   if (doorbell) {
     process_utp_transfers(s, doorbell);
   }
@@ -1272,6 +1277,7 @@ static void qcom_ufs_tm_bh(void *opaque) {
   QcomUfsState *s = QCOM_UFSHC(opaque);
   uint32_t doorbell = *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR);
 
+  ufs_log("[UFS_BH] qcom_ufs_tm_bh running, doorbell=0x%08x\n", doorbell);
   if (doorbell) {
     process_task_mgmt_transfers(s, doorbell);
   }
@@ -1282,8 +1288,9 @@ static uint64_t qcom_ufshc_read(void *opaque, hwaddr offset, unsigned size) {
   if (offset + size <= 0x1000) {
     uint32_t val = *(uint32_t *)(s->ufshc_regs + offset);
     if (offset == REG_INTERRUPT_STATUS || offset == REG_INTERRUPT_ENABLE ||
-        offset == REG_UTRLDBR) {
-      ufs_log("[UFS_REG_RD] off=0x%" PRIx64 ", val=0x%x\n", offset, val);
+        offset == REG_UTRLDBR || offset == 0xb0) {
+      ufs_log("[UFS_REG_RD] off=0x%" PRIx64 ", val=0x%x, caller=0x%" PRIx64 "\n",
+              offset, val, (uint64_t)(uintptr_t)__builtin_return_address(0));
     }
     return val;
   }
@@ -1295,8 +1302,9 @@ static void qcom_ufshc_write(void *opaque, hwaddr offset, uint64_t val,
   QcomUfsState *s = QCOM_UFSHC(opaque);
   if (offset + size <= 0x1000) {
     if (offset == REG_INTERRUPT_STATUS || offset == REG_INTERRUPT_ENABLE ||
-        offset == REG_UTRLDBR) {
-      ufs_log("[UFS_REG_WR] off=0x%" PRIx64 ", val=0x%" PRIx64 "\n", offset, val);
+        offset == REG_UTRLDBR || offset == 0xb0) {
+      ufs_log("[UFS_REG_WR] off=0x%" PRIx64 ", val=0x%" PRIx64 ", caller=0x%" PRIx64 "\n",
+              offset, val, (uint64_t)(uintptr_t)__builtin_return_address(0));
     }
     if (offset == REG_INTERRUPT_STATUS) {
       /* Write 1 to clear (W1C) */
@@ -1309,11 +1317,13 @@ static void qcom_ufshc_write(void *opaque, hwaddr offset, uint64_t val,
       return;
     } else if (offset == REG_UTRLDBR) {
       *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR) |= (uint32_t)val;
-      process_utp_transfers(s, (uint32_t)val);
+      ufs_log("[UFS_DOORBELL] REG_UTRLDBR written val=0x%08x -> scheduling transfer_bh\n", (uint32_t)val);
+      qemu_bh_schedule(s->transfer_bh);
       return;
     } else if (offset == REG_UTMRLDBR) {
       *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR) |= (uint32_t)val;
-      process_task_mgmt_transfers(s, (uint32_t)val);
+      ufs_log("[UFS_DOORBELL] REG_UTMRLDBR written val=0x%08x -> scheduling tm_bh\n", (uint32_t)val);
+      qemu_bh_schedule(s->tm_bh);
       return;
     } else if (offset == REG_HOST_CONTROLLER_ENABLE) {
       if (val & 1) {
@@ -1354,7 +1364,7 @@ static void qcom_ufs_reset(DeviceState *dev) {
   memset(s->ufsice_regs, 0, sizeof(s->ufsice_regs));
 
   *(uint32_t *)(s->ufshc_regs + REG_CAPABILITIES) = 0x0187001FU;
-  *(uint32_t *)(s->ufshc_regs + REG_UFS_VERSION) = 0x00000210U;
+  *(uint32_t *)(s->ufshc_regs + REG_UFS_VERSION) = 0x00010000U;
   *(uint32_t *)(s->ufshc_regs + REG_HOST_CONTROLLER_STATUS) = 0x0000000FU;
   *(uint32_t *)(s->ufshc_regs + REG_HOST_CONTROLLER_ENABLE) = 0x00000001U;
 
@@ -1417,10 +1427,12 @@ static void qcom_ufs_realize(DeviceState *dev, Error **errp) {
   /* Interrupt output */
   sysbus_init_irq(SYS_BUS_DEVICE(s), &s->irq);
 
-  /* Bottom Halves for asynchronous transfer execution */
+  /* Bottom Halves and Timers for asynchronous transfer execution */
   s->transfer_bh =
       qemu_bh_new_guarded(qcom_ufs_transfer_bh, s, &dev->mem_reentrancy_guard);
   s->tm_bh = qemu_bh_new_guarded(qcom_ufs_tm_bh, s, &dev->mem_reentrancy_guard);
+  s->transfer_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, qcom_ufs_transfer_bh, s);
+  s->tm_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, qcom_ufs_tm_bh, s);
 
   if (!ufs_log_file) {
     ufs_log_file = fopen("C:\\qemu_work\\ufs_debug.log", "w");
