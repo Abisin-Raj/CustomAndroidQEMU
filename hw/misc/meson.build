@@ -15,7 +15,7 @@ system_ss.add(when: 'CONFIG_INTEGRATOR_DEBUG', if_true: files('arm_integrator_de
 system_ss.add(when: 'CONFIG_A9SCU', if_true: files('a9scu.c'))
 system_ss.add(when: 'CONFIG_ARM11SCU', if_true: files('arm11scu.c'))
 system_ss.add(when: 'CONFIG_QCOM_GCC_SM6150', if_true: files('qcom-gcc-sm6150.c'))
-system_ss.add(when: 'CONFIG_QCOM_UFSHC', if_true: files('qcom-ufshc.c'))
+specific_ss.add(when: 'CONFIG_QCOM_UFSHC', if_true: files('qcom-ufshc.c'))
 
 system_ss.add(when: 'CONFIG_ARM_V7M', if_true: files('armv7m_ras.c'))
 

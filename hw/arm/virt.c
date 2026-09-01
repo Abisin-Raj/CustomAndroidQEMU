@@ -2364,9 +2364,9 @@ static void machvirt_init(MachineState *machine)
             create_uart(vms, VIRT_UART1, sysmem, serial1, false);
         }
     }
-    create_uart(vms, VIRT_UART0, sysmem, serial_hd(0), false);
+    create_uart(vms, VIRT_UART0, sysmem, serial_hd(1), false);
     if (vms->secure) {
-        create_uart(vms, VIRT_UART1, secure_sysmem, serial_hd(1), true);
+        create_uart(vms, VIRT_UART1, secure_sysmem, NULL, true);
     }
 
     if (vms->secure) {
@@ -2428,6 +2428,15 @@ static void machvirt_init(MachineState *machine)
         sysbus_mmio_map(SYS_BUS_DEVICE(ufs_dev), 1, 0x1d87000); /* QMP UFS PHY */
         sysbus_mmio_map(SYS_BUS_DEVICE(ufs_dev), 2, 0x1d90000); /* UFS ICE */
         sysbus_connect_irq(SYS_BUS_DEVICE(ufs_dev), 0, qdev_get_gpio_in(vms->gic, 200));
+    }
+
+    /* Create Qualcomm GENI Serial Engine UART at 0x880000 for earlycon and ttyMSM0 */
+    {
+        DeviceState *geni_dev = qdev_new("qcom-geni-serial");
+        qdev_prop_set_chr(geni_dev, "chardev", serial_hd(0));
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(geni_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(geni_dev), 0, 0x880000);
+        sysbus_connect_irq(SYS_BUS_DEVICE(geni_dev), 0, qdev_get_gpio_in(vms->gic, 209));
     }
 
     if (machine->nvdimms_state->is_enabled) {

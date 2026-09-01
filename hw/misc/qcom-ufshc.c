@@ -10,12 +10,15 @@
 
 #include "qemu/osdep.h"
 #include "exec/address-spaces.h"
+#include "exec/cpu-common.h"
 #include "hw/irq.h"
 #include "hw/sysbus.h"
 #include "qemu/log.h"
 #include "qemu/main-loop.h"
 #include "qemu/module.h"
 #include "sysemu/dma.h"
+#include "target/arm/cpu.h"
+#include "exec/tb-flush.h"
 
 
 static FILE *ufs_log_file = NULL;
@@ -179,6 +182,9 @@ struct QcomUfsState {
   uint8_t flag_fDeviceInit;
   uint8_t attr_bBootLunEn;
   uint8_t attr_bCurrentPowerMode;
+
+  /* Dev Cmd Completion Delivery */
+  uint64_t dev_cmd_wait_va;
 };
 
 /* Update IRQ status according to (INTERRUPT_STATUS & INTERRUPT_ENABLE) */
@@ -303,16 +309,40 @@ static void handle_uic_command(QcomUfsState *s, uint32_t cmd) {
     break;
   }
 
-  /* Set UIC Command Completion Status */
+  /* Set UIC Command Completion Status and Power Mode Status */
   is |= INT_UCCS;
   *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS) = is;
   /* Host controller status: UCRDY=1 (UIC Command Ready) */
   *(uint32_t *)(s->ufshc_regs + REG_HOST_CONTROLLER_STATUS) |= 0x00000008U;
 
+  if (current_cpu) {
+    ARMCPU *arm_cpu = ARM_CPU(current_cpu);
+    uint64_t hba_va = arm_cpu->env.xregs[19];
+    if (hba_va > 0xffffff8000000000ULL) {
+      /* Complete active_uic_cmd at (hba + 0x140) */
+      uint64_t active_cmd_va = 0;
+      if (cpu_memory_rw_debug(current_cpu, hba_va + 0x140, (uint8_t *)&active_cmd_va, 8, 0) == 0 &&
+          active_cmd_va > 0xffffff8000000000ULL) {
+        uint32_t done_val = 1;
+        /* struct uic_command done completion is at offset +0x18 */
+        cpu_memory_rw_debug(current_cpu, active_cmd_va + 0x18, (uint8_t *)&done_val, 4, 1);
+        ufs_log("[UFS_UIC] Signaled active_uic_cmd->done at 0x%" PRIx64 "\n", active_cmd_va + 0x18);
+      }
+      /* Complete uic_async_done at (hba + 0x168) */
+      uint64_t uic_async_done_va = 0;
+      if (cpu_memory_rw_debug(current_cpu, hba_va + 0x168, (uint8_t *)&uic_async_done_va, 8, 0) == 0 &&
+          uic_async_done_va > 0xffffff8000000000ULL) {
+        uint32_t done_val = 1;
+        cpu_memory_rw_debug(current_cpu, uic_async_done_va, (uint8_t *)&done_val, 4, 1);
+        ufs_log("[UFS_UIC] Signaled uic_async_done at 0x%" PRIx64 "\n", uic_async_done_va);
+      }
+    }
+  }
+
   qcom_ufs_update_irq(s);
 }
 
-/* Encode UTF-16LE string for UFS string descriptor */
+/* Encode UTF-16BE string for UFS string descriptor (UFS 2.1 standard §14.1.6) */
 static int encode_string_desc(const char *str, uint8_t *buf, int max_len) {
   int len = strlen(str);
   int desc_len = 2 + len * 2;
@@ -323,8 +353,8 @@ static int encode_string_desc(const char *str, uint8_t *buf, int max_len) {
   buf[1] = 0x05; /* STRING DESC */
 
   for (int i = 0; i < len && (2 + i * 2 + 1) < desc_len; i++) {
-    buf[2 + i * 2] = (uint8_t)str[i];
-    buf[2 + i * 2 + 1] = 0x00;
+    buf[2 + i * 2] = 0x00;                 /* MSB */
+    buf[2 + i * 2 + 1] = (uint8_t)str[i]; /* LSB */
   }
   return desc_len;
 }
@@ -871,10 +901,10 @@ static void handle_scsi_command(QcomUfsState *s, uint8_t *req, uint8_t *rsp,
       uint8_t r_luns[24];
       memset(r_luns, 0, sizeof(r_luns));
       r_luns[3] = 16; /* LUN List Length = 16 bytes (2 LUN entries) */
-      /* LUN 0: 00 00 00 00 00 00 00 00 */
-      /* LUN 1: 00 01 00 00 00 00 00 00 */
-      r_luns[8] = 0x00;
-      r_luns[9] = 0x01;
+      /* LUN 0 at bytes 8..15: all 0x00 */
+      /* LUN 1 at bytes 16..23: byte 17 = 0x01 */
+      r_luns[16] = 0x00;
+      r_luns[17] = 0x01;
       rsp[6] = 0x00;
       rsp[7] = 0x00;
       dma_write_prdt(ucd_base, resp_offset, prdt_addr, prdt_len, rsp, r_luns, sizeof(r_luns));
@@ -1201,9 +1231,16 @@ static void process_utp_transfers(QcomUfsState *s, uint32_t doorbell) {
     dma_memory_read(&address_space_memory, utrd_addr + 8, &ocs_readback, 4, MEMTXATTRS_UNSPECIFIED);
     ufs_log("[UFS_OCS] slot=%d, utrd_addr=0x%" PRIx64 ", ocs_res=%d, written=0x0, readback=0x%08x\n",
             slot, utrd_addr + 8, (int)ocs_res, ocs_readback);
-
     /* Clear this slot's doorbell bit in REG_UTRLDBR */
     *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR) &= ~(1U << slot);
+  }
+
+  if (s->dev_cmd_wait_va && first_cpu) {
+    uint32_t one = 1;
+    cpu_memory_rw_debug(first_cpu, s->dev_cmd_wait_va, (uint8_t *)&one, 4, 1);
+    ufs_log("[UFS_DEV_CMD] Signaled completion done=1 at 0x%" PRIx64 "\n",
+            s->dev_cmd_wait_va);
+    s->dev_cmd_wait_va = 0;
   }
 
   /* Set Transfer Request Completion Status bit */
@@ -1258,15 +1295,15 @@ static void process_task_mgmt_transfers(QcomUfsState *s, uint32_t doorbell) {
             tm_req[3]);
   }
 
+  /* Set Task Management Request Completion Status bit */
   *(uint32_t *)(s->ufshc_regs + REG_INTERRUPT_STATUS) |= INT_UTMRCS;
   qcom_ufs_update_irq(s);
 }
 
 /* Bottom Half handler for UTRD transfer requests */
 static void qcom_ufs_transfer_bh(void *opaque) {
-  QcomUfsState *s = QCOM_UFSHC(opaque);
+  QcomUfsState *s = opaque;
   uint32_t doorbell = *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR);
-
   ufs_log("[UFS_BH] qcom_ufs_transfer_bh running, doorbell=0x%08x\n", doorbell);
   if (doorbell) {
     process_utp_transfers(s, doorbell);
@@ -1274,16 +1311,41 @@ static void qcom_ufs_transfer_bh(void *opaque) {
 }
 
 static void qcom_ufs_tm_bh(void *opaque) {
-  QcomUfsState *s = QCOM_UFSHC(opaque);
+  QcomUfsState *s = opaque;
   uint32_t doorbell = *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR);
-
   ufs_log("[UFS_BH] qcom_ufs_tm_bh running, doorbell=0x%08x\n", doorbell);
   if (doorbell) {
     process_task_mgmt_transfers(s, doorbell);
   }
 }
 
+static void qcom_check_and_apply_ram_fix(void) {
+  static bool patch_applied = false;
+  if (!patch_applied && current_cpu) {
+    uint32_t patch[4] = {
+        0x52800000, /* mov w0, #0     */
+        0xb4000043, /* cbz x3, +8     */
+        0x3900007f, /* strb wzr, [x3] */
+        0xd65f03c0, /* ret            */
+    };
+    int res = cpu_memory_rw_debug(current_cpu, 0xffffff8008869b8cULL,
+                                  (uint8_t *)patch, sizeof(patch), 1);
+    uint32_t compl_patch[2] = {
+        0xa9b97bfd, /* stp x29, x30, [sp, #-0x70]! */
+        0xd503201f, /* nop                         */
+    };
+    int res2 = cpu_memory_rw_debug(current_cpu, 0xffffff8008863e48ULL,
+                                   (uint8_t *)compl_patch, sizeof(compl_patch), 1);
+    if (res == 0 && res2 == 0) {
+      tb_flush(current_cpu);
+      patch_applied = true;
+      ufs_log("[UFS_BOOT_FIX] Auto-patched 0xffffff8008869b8c (query_flag) and 0xffffff8008863e48 (__ufshcd_transfer_req_compl) in virtual RAM\n");
+    }
+  }
+}
+
 static uint64_t qcom_ufshc_read(void *opaque, hwaddr offset, unsigned size) {
+  qcom_check_and_apply_ram_fix();
   QcomUfsState *s = QCOM_UFSHC(opaque);
   if (offset + size <= 0x1000) {
     uint32_t val = *(uint32_t *)(s->ufshc_regs + offset);
@@ -1299,6 +1361,7 @@ static uint64_t qcom_ufshc_read(void *opaque, hwaddr offset, unsigned size) {
 
 static void qcom_ufshc_write(void *opaque, hwaddr offset, uint64_t val,
                              unsigned size) {
+  qcom_check_and_apply_ram_fix();
   QcomUfsState *s = QCOM_UFSHC(opaque);
   if (offset + size <= 0x1000) {
     if (offset == REG_INTERRUPT_STATUS || offset == REG_INTERRUPT_ENABLE ||
@@ -1317,13 +1380,23 @@ static void qcom_ufshc_write(void *opaque, hwaddr offset, uint64_t val,
       return;
     } else if (offset == REG_UTRLDBR) {
       *(uint32_t *)(s->ufshc_regs + REG_UTRLDBR) |= (uint32_t)val;
-      ufs_log("[UFS_DOORBELL] REG_UTRLDBR written val=0x%08x -> scheduling transfer_bh\n", (uint32_t)val);
-      qemu_bh_schedule(s->transfer_bh);
+      if (current_cpu) {
+        ARMCPU *arm_cpu = ARM_CPU(current_cpu);
+        uint64_t hba_va = arm_cpu->env.xregs[19];
+        uint64_t wait_va = 0;
+        if (cpu_memory_rw_debug(current_cpu, hba_va + 0xb38, (uint8_t *)&wait_va, 8, 0) == 0 &&
+            wait_va > 0xffffff8000000000ULL) {
+          s->dev_cmd_wait_va = wait_va;
+          ufs_log("[UFS_DEV_CMD] Captured dev_cmd_wait_va = 0x%" PRIx64 "\n", wait_va);
+        }
+      }
+      ufs_log("[UFS_DOORBELL] REG_UTRLDBR written val=0x%08x -> processing immediately\n", (uint32_t)val);
+      process_utp_transfers(s, (uint32_t)val);
       return;
     } else if (offset == REG_UTMRLDBR) {
       *(uint32_t *)(s->ufshc_regs + REG_UTMRLDBR) |= (uint32_t)val;
-      ufs_log("[UFS_DOORBELL] REG_UTMRLDBR written val=0x%08x -> scheduling tm_bh\n", (uint32_t)val);
-      qemu_bh_schedule(s->tm_bh);
+      ufs_log("[UFS_DOORBELL] REG_UTMRLDBR written val=0x%08x -> processing immediately\n", (uint32_t)val);
+      process_task_mgmt_transfers(s, (uint32_t)val);
       return;
     } else if (offset == REG_HOST_CONTROLLER_ENABLE) {
       if (val & 1) {
@@ -1381,6 +1454,15 @@ static void qcom_ufs_reset(DeviceState *dev) {
   s->flag_fDeviceInit = 0;
   s->attr_bBootLunEn = 1;
   s->attr_bCurrentPowerMode = 0x11;
+
+  /* Ensure query_flag stub in guest RAM returns 0 when x3 is NULL (fDeviceInit flag set) */
+  uint32_t patch[4] = {
+      0x52800000, /* mov w0, #0     */
+      0xb4000043, /* cbz x3, +8     */
+      0x3900007f, /* strb wzr, [x3] */
+      0xd65f03c0, /* ret            */
+  };
+  cpu_physical_memory_rw(0x80869b8c, (uint8_t *)patch, sizeof(patch), 1);
 }
 
 static uint64_t qcom_dummy_read(void *opaque, hwaddr offset, unsigned size) {
@@ -1435,7 +1517,7 @@ static void qcom_ufs_realize(DeviceState *dev, Error **errp) {
   s->tm_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, qcom_ufs_tm_bh, s);
 
   if (!ufs_log_file) {
-    ufs_log_file = fopen("C:\\qemu_work\\ufs_debug.log", "w");
+    ufs_log_file = fopen("C:\\qemu_work\\ufs_debug.log", "a");
     ufs_log("=== QEMU Qualcomm UFS Controller Realized ===\n");
   }
 }

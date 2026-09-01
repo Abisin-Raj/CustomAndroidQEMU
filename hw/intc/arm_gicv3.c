@@ -382,7 +382,44 @@ static void gicv3_set_irq(void *opaque, int irq, int level)
 
     if (irq < (s->num_irq - GIC_INTERNAL)) {
         /* external interrupt (SPI) */
+        if (irq == 200) {
+            FILE *f = fopen("C:\\qemu_work\\ufs_debug.log", "a");
+            if (f) {
+                int intid = irq + GIC_INTERNAL;
+                int base = intid & ~0x1f;
+                int bit = intid & 0x1f;
+                uint32_t pending = *gic_bmp_ptr32(s->pending, base);
+                uint32_t edge_trigger = *gic_bmp_ptr32(s->edge_trigger, base);
+                uint32_t lvl = *gic_bmp_ptr32(s->level, base);
+                uint32_t group = *gic_bmp_ptr32(s->group, base);
+                uint32_t grpmod = *gic_bmp_ptr32(s->grpmod, base);
+                uint32_t enable = *gic_bmp_ptr32(s->enabled, base);
+                uint32_t active = *gic_bmp_ptr32(s->active, base);
+                uint32_t pend = gicd_int_pending(s, base);
+                fprintf(f, "[GIC_UFS_DETAIL] intid=%d: level_arg=%d, bmp_lvl=%d, edge=%d, en=%d, act=%d, grp=%d, grpmod=%d, gicd_ctlr=0x%x, pend=%d\n",
+                        intid, level, (lvl >> bit) & 1, (edge_trigger >> bit) & 1,
+                        (enable >> bit) & 1, (active >> bit) & 1, (group >> bit) & 1,
+                        (grpmod >> bit) & 1, s->gicd_ctlr, (pend >> bit) & 1);
+                fclose(f);
+            }
+        }
         gicv3_dist_set_irq(s, irq + GIC_INTERNAL, level);
+        if (irq == 200) {
+            FILE *f = fopen("C:\\qemu_work\\ufs_debug.log", "a");
+            if (f) {
+                int intid = irq + GIC_INTERNAL;
+                int base = intid & ~0x1f;
+                int bit = intid & 0x1f;
+                uint32_t lvl = *gic_bmp_ptr32(s->level, base);
+                uint32_t group = *gic_bmp_ptr32(s->group, base);
+                uint32_t enable = *gic_bmp_ptr32(s->enabled, base);
+                uint32_t pend = gicd_int_pending(s, base);
+                fprintf(f, "[GIC_UFS_AFTER] intid=%d: bmp_lvl=%d, en=%d, grp=%d, gicd_ctlr=0x%x, pend=%d, cs0_hppi_irq=%d, prio=%d\n",
+                        intid, (lvl >> bit) & 1, (enable >> bit) & 1, (group >> bit) & 1,
+                        s->gicd_ctlr, (pend >> bit) & 1, s->cpu[0].hppi.irq, s->cpu[0].hppi.prio);
+                fclose(f);
+            }
+        }
     } else {
         /* per-cpu interrupt (PPI) */
         int cpu;
