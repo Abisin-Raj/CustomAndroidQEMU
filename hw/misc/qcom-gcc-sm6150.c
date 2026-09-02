@@ -112,19 +112,18 @@ static uint64_t qcom_gcc_sm6150_read(void *opaque, hwaddr offset, unsigned size)
     switch (size) {
     case 4:
         val = *(uint32_t *)(s->regs + offset);
-        if ((offset >= 0x77000 && offset <= 0x770ff) ||
-            (offset >= 0x12000 && offset <= 0x120ff) ||
-            (offset >= 0x14000 && offset <= 0x140ff)) {
+        if (is_pll_reg(offset)) {
+            val |= PLL_MODE_LOCKED;
+        } else if (is_vote_reg(offset)) {
+            /* Voting registers */
+        } else {
             /*
-             * All Qualcomm UFS and SDCC Clock Registers (RCG2s and CBCRs):
+             * For all Qualcomm RCG2 and Branch Clock Registers:
              *   Bit  0: UPDATE = 0 (Hardware completed update)
              *   Bit  1: ROOT_EN = 1 (Root clock generator is active)
              *   Bit 31: ROOT_OFF / CLK_OFF = 0 (Clock is running, not off)
              */
             val = (val | 0x00000002U) & ~0x80000001U;
-        } else if (offset == 0x8c000) {
-            /* UFS Reference Clock CBCR */
-            val &= ~0x80000000U;
         }
         break;
     case 8:
@@ -161,13 +160,9 @@ static void qcom_gcc_sm6150_write(void *opaque, hwaddr offset,
             val |= PLL_MODE_LOCKED;
         } else if (is_vote_reg(offset)) {
             /* Voting registers (APCS_*_ENA_VOTE): store exact bitmask */
-        } else if ((offset >= 0x77000 && offset <= 0x770ff) ||
-                   (offset >= 0x12000 && offset <= 0x120ff) ||
-                   (offset >= 0x14000 && offset <= 0x140ff)) {
+        } else {
             /* Auto-clear UPDATE bit on write and ensure ROOT_OFF / CLK_OFF = 0 */
             val &= ~0x80000001U;
-        } else if (offset == 0x8c000) {
-            val &= ~0x80000000U;
         }
 
         *(uint32_t *)(s->regs + offset) = val;
