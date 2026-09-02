@@ -20,3 +20,26 @@ GTAGS
 *.swp
 *.patch
 *.gcov
+
+# IDE & OS
+.idea/
+*.iml
+Thumbs.db
+.DS_Store
+
+# Compiled / generated outputs
+*.o
+*.a
+*.so
+*.dll
+*.exe
+*.bin
+*.elf
+
+# Logs & traces
+*.log
+*.txt.bak
+
+# Python cache
+__pycache__/
+*.pyo
