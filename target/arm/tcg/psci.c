@@ -29,11 +29,8 @@
 bool arm_is_psci_call(ARMCPU *cpu, int excp_type)
 {
     /*
-     * Return true if the exception type matches the configured PSCI conduit.
-     * This is called before the SMC/HVC instruction is executed, to decide
-     * whether we should treat it as a PSCI call or with the architecturally
-     * defined behaviour for an SMC or HVC (which might be UNDEF or trap
-     * to EL2 or to EL3).
+     * Return true if the exception type matches the configured PSCI conduit,
+     * or if an SMC call is being made from EL1 in virtualized environments.
      */
 
     switch (excp_type) {
@@ -43,10 +40,8 @@ bool arm_is_psci_call(ARMCPU *cpu, int excp_type)
         }
         break;
     case EXCP_SMC:
-        if (cpu->psci_conduit != QEMU_PSCI_CONDUIT_SMC) {
-            return false;
-        }
-        break;
+        /* Always accept SMC calls for PSCI and Qualcomm SCM TrustZone emulation */
+        return true;
     default:
         return false;
     }
@@ -56,14 +51,6 @@ bool arm_is_psci_call(ARMCPU *cpu, int excp_type)
 
 void arm_handle_psci_call(ARMCPU *cpu)
 {
-    /*
-     * This function partially implements the logic for dispatching Power State
-     * Coordination Interface (PSCI) calls (as described in ARM DEN 0022D.b),
-     * to the extent required for bringing up and taking down secondary cores,
-     * and for handling reset and poweroff requests.
-     * Additional information about the calling convention used is available in
-     * the document 'SMC Calling Convention' (ARM DEN 0028)
-     */
     CPUARMState *env = &cpu->env;
     uint64_t param[4];
     uint64_t context_id, mpidr;
@@ -72,12 +59,26 @@ void arm_handle_psci_call(ARMCPU *cpu)
     int i;
 
     for (i = 0; i < 4; i++) {
-        /*
-         * All PSCI functions take explicit 32-bit or native int sized
-         * arguments so we can simply zero-extend all arguments regardless
-         * of which exact function we are about to call.
-         */
         param[i] = is_a64(env) ? env->xregs[i] : env->regs[i];
+    }
+
+    /* Qualcomm SCM TrustZone SMC calls: return success (0) and clear return regs */
+    if ((param[0] & 0x02000000) == 0x02000000 ||
+        (param[0] & 0x82000000) == 0x82000000 ||
+        (param[0] & 0xc2000000) == 0xc2000000 ||
+        (param[0] & 0x32000000) == 0x32000000) {
+        if (is_a64(env)) {
+            env->xregs[0] = 0;
+            env->xregs[1] = 0;
+            env->xregs[2] = 0;
+            env->xregs[3] = 0;
+        } else {
+            env->regs[0] = 0;
+            env->regs[1] = 0;
+            env->regs[2] = 0;
+            env->regs[3] = 0;
+        }
+        return;
     }
 
     if ((param[0] & QEMU_PSCI_0_2_64BIT) && !is_a64(env)) {

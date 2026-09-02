@@ -41,6 +41,9 @@
 #include "hw/vfio/vfio-calxeda-xgmac.h"
 #include "hw/vfio/vfio-amd-xgbe.h"
 #include "hw/display/ramfb.h"
+#include "hw/sd/sd.h"
+#include "hw/sd/qcom-sdhci-msm.h"
+#include "hw/qdev-properties.h"
 #include "net/net.h"
 #include "sysemu/device_tree.h"
 #include "sysemu/numa.h"
@@ -2437,6 +2440,37 @@ static void machvirt_init(MachineState *machine)
         sysbus_realize_and_unref(SYS_BUS_DEVICE(geni_dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(geni_dev), 0, 0x880000);
         sysbus_connect_irq(SYS_BUS_DEVICE(geni_dev), 0, qdev_get_gpio_in(vms->gic, 209));
+    }
+
+    /* Create Qualcomm SPMI PMIC Arbiter at 0x0c440000 */
+    {
+        DeviceState *spmi_dev = qdev_new("qcom-spmi-pmic-arb");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(spmi_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(spmi_dev), 0, 0x0c440000); /* core */
+        sysbus_mmio_map(SYS_BUS_DEVICE(spmi_dev), 1, 0x0c600000); /* chnls */
+        sysbus_mmio_map(SYS_BUS_DEVICE(spmi_dev), 2, 0x0e600000); /* obsrvr */
+        sysbus_mmio_map(SYS_BUS_DEVICE(spmi_dev), 3, 0x0e700000); /* intr */
+        sysbus_mmio_map(SYS_BUS_DEVICE(spmi_dev), 4, 0x0c40a000); /* cnfg */
+        sysbus_connect_irq(SYS_BUS_DEVICE(spmi_dev), 0, qdev_get_gpio_in(vms->gic, 180));
+    }
+
+    /* Create Qualcomm SM6150 SDHCI Host Controller (0x7c4000), CMDQ (0x7c5000), and ICE (0x7c8000) */
+    {
+        DeviceState *sdhci_dev = qdev_new("qcom-sdhci-msm");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(sdhci_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(sdhci_dev), 0, 0x7c4000); /* Host Controller */
+        sysbus_mmio_map(SYS_BUS_DEVICE(sdhci_dev), 1, 0x7c5000); /* CMDQ Engine */
+        sysbus_mmio_map(SYS_BUS_DEVICE(sdhci_dev), 2, 0x7c8000); /* Storage ICE */
+        sysbus_connect_irq(SYS_BUS_DEVICE(sdhci_dev), 0, qdev_get_gpio_in(vms->gic, 210)); /* hc_irq (GIC SPI 210) */
+        sysbus_connect_irq(SYS_BUS_DEVICE(sdhci_dev), 1, qdev_get_gpio_in(vms->gic, 214)); /* pwr_irq (GIC SPI 214) */
+
+        /* Attach SD/eMMC block device if -drive if=sd was supplied */
+        DriveInfo *dinfo = drive_get(IF_SD, 0, 0);
+        if (dinfo) {
+            DeviceState *card = qdev_new(TYPE_EMMC);
+            qdev_prop_set_drive_err(card, "drive", blk_by_legacy_dinfo(dinfo), &error_fatal);
+            qdev_realize_and_unref(card, QCOM_SDHCI_MSM(sdhci_dev)->bus, &error_fatal);
+        }
     }
 
     if (machine->nvdimms_state->is_enabled) {

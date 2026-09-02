@@ -77,7 +77,7 @@ static uint64_t qcom_geni_read(void *opaque, hwaddr offset, unsigned size)
         break;
     case GENI_FW_REVISION_RO:
     case GENI_S_FW_REVISION_RO:
-        ret = 0x00010100; /* Protocol UART (0x1), Version 1.0 */
+        ret = 0x00020100; /* Protocol UART (0x2), Version 1.0 */
         break;
     case GENI_M_CMD0:
         ret = s->m_cmd0;
@@ -154,6 +154,14 @@ static void qcom_geni_write(void *opaque, hwaddr offset, uint64_t val, unsigned 
 
         for (int i = 0; i < to_write; i++) {
             if (bytes[i] != 0) {
+                static FILE *fcons = NULL;
+                if (!fcons) {
+                    fcons = fopen("C:\\qemu_work\\geni_console.log", "w");
+                }
+                if (fcons) {
+                    fputc(bytes[i], fcons);
+                    fflush(fcons);
+                }
                 if (qemu_chr_fe_backend_connected(&s->chr)) {
                     qemu_chr_fe_write(&s->chr, &bytes[i], 1);
                 } else {
@@ -183,6 +191,8 @@ static void qcom_geni_serial_init(Object *obj)
 {
     QcomGeniSerialState *s = QCOM_GENI_SERIAL(obj);
     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
+
+    geni_log("=== QEMU Qualcomm GENI Serial Realized ===\n");
 
     memory_region_init_io(&s->mmio, obj, &qcom_geni_ops, s,
                           "qcom-geni-serial", 0x4000);

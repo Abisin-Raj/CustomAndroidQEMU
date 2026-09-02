@@ -1078,7 +1078,7 @@ void HELPER(pre_smc)(CPUARMState *env, uint32_t syndrome)
 
     if (!arm_feature(env, ARM_FEATURE_EL3) &&
         !(arm_hcr_el2_eff(env) & HCR_NV) &&
-        cpu->psci_conduit != QEMU_PSCI_CONDUIT_SMC) {
+        !arm_is_psci_call(cpu, EXCP_SMC)) {
         /*
          * If we have no EL3 then traditionally SMC always UNDEFs and can't be
          * trapped to EL2. For nested virtualization, SMC can be trapped to

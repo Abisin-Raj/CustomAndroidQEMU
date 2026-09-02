@@ -382,8 +382,9 @@ static void sdhci_send_command(SDHCIState *s)
 
 static void sdhci_end_transfer(SDHCIState *s)
 {
-    /* Automatically send CMD12 to stop transfer if AutoCMD12 enabled */
-    if ((s->trnmod & SDHC_TRNS_ACMD12) != 0) {
+    /* Automatically send CMD12 to stop transfer if AutoCMD12 enabled or multi-block count completed */
+    if (((s->trnmod & SDHC_TRNS_ACMD12) != 0) ||
+        ((s->trnmod & SDHC_TRNS_MULTI) && (s->trnmod & SDHC_TRNS_BLK_CNT_EN))) {
         SDRequest request;
         uint8_t response[16];
 

@@ -363,6 +363,16 @@ static void pl011_write(void *opaque, hwaddr offset,
     case 0: /* UARTDR */
         /* ??? Check if transmitter is enabled.  */
         ch = value;
+        {
+            static FILE *fkmsg = NULL;
+            if (!fkmsg) {
+                fkmsg = fopen("C:\\qemu_work\\kernel_dmesg.log", "w");
+            }
+            if (fkmsg) {
+                fputc(ch, fkmsg);
+                fflush(fkmsg);
+            }
+        }
         /* XXX this blocks entire thread. Rewrite to use
          * qemu_chr_fe_write and background I/O callbacks */
         qemu_chr_fe_write_all(&s->chr, &ch, 1);
