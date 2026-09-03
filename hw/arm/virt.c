@@ -2360,7 +2360,7 @@ static void machvirt_init(MachineState *machine)
      * that's what QEMU has always done.
      */
     if (!vms->secure) {
-        Chardev *serial1 = serial_hd(1);
+        Chardev *serial1 = serial_hd(2);
 
         if (serial1) {
             vms->second_ns_uart_present = true;
