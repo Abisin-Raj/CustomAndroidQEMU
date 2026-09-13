@@ -43,3 +43,4 @@ Thumbs.db
 # Python cache
 __pycache__/
 *.pyo
+bionic_packed_relocs.txt
