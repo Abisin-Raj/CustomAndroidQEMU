@@ -374,6 +374,9 @@ VMChangeStateEntry *qemu_add_vm_change_state_handler(VMChangeStateHandler *cb,
 
 void qemu_del_vm_change_state_handler(VMChangeStateEntry *e)
 {
+    if (!e || !e->entries.tqe_circ.tql_prev) {
+        return;
+    }
     QTAILQ_REMOVE(&vm_change_state_head, e, entries);
     g_free(e);
 }
