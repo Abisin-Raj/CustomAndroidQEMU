@@ -25,6 +25,8 @@
 #include "internals.h"
 #include "arm-powerctl.h"
 #include "target/arm/multiprocessing.h"
+#include "exec/address-spaces.h"
+#include "qcom_scm.c"
 
 bool arm_is_psci_call(ARMCPU *cpu, int excp_type)
 {
@@ -62,23 +64,11 @@ void arm_handle_psci_call(ARMCPU *cpu)
         param[i] = is_a64(env) ? env->xregs[i] : env->regs[i];
     }
 
-    /* Qualcomm SCM TrustZone SMC calls: return success (0) and clear return regs */
-    if ((param[0] & 0x02000000) == 0x02000000 ||
-        (param[0] & 0x82000000) == 0x82000000 ||
-        (param[0] & 0xc2000000) == 0xc2000000 ||
-        (param[0] & 0x32000000) == 0x32000000) {
-        if (is_a64(env)) {
-            env->xregs[0] = 0;
-            env->xregs[1] = 0;
-            env->xregs[2] = 0;
-            env->xregs[3] = 0;
-        } else {
-            env->regs[0] = 0;
-            env->regs[1] = 0;
-            env->regs[2] = 0;
-            env->regs[3] = 0;
+    /* Dispatch Qualcomm Engine (QE) SCM TrustZone SMC calls */
+    if (qcom_scm_is_call(param[0])) {
+        if (qcom_scm_handle_call(env, param)) {
+            return;
         }
-        return;
     }
 
     if ((param[0] & QEMU_PSCI_0_2_64BIT) && !is_a64(env)) {

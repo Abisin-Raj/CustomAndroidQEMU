@@ -2473,6 +2473,16 @@ static void machvirt_init(MachineState *machine)
         }
     }
 
+    /* Create Qualcomm KGSL / Adreno 612 Virtual GPU at 0x05090000 */
+    {
+        DeviceState *kgsl_dev = qdev_new("qcom-kgsl");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(kgsl_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(kgsl_dev), 0, 0x05090000); /* MMIO registers (0x05090000-0x050a0000) */
+        sysbus_mmio_map(SYS_BUS_DEVICE(kgsl_dev), 1, 0x050a0000); /* Memstore shadow page */
+        sysbus_connect_irq(SYS_BUS_DEVICE(kgsl_dev), 0, qdev_get_gpio_in(vms->gic, 220)); /* GX IRQ (SPI 220) */
+        sysbus_connect_irq(SYS_BUS_DEVICE(kgsl_dev), 1, qdev_get_gpio_in(vms->gic, 224)); /* GMU IRQ (SPI 224) */
+    }
+
     if (machine->nvdimms_state->is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {
             .space_id = AML_AS_SYSTEM_MEMORY,
