@@ -43,6 +43,7 @@
 #include "hw/display/ramfb.h"
 #include "hw/sd/sd.h"
 #include "hw/sd/qcom-sdhci-msm.h"
+#include "hw/misc/unimp.h"
 #include "hw/qdev-properties.h"
 #include "net/net.h"
 #include "sysemu/device_tree.h"
@@ -2489,6 +2490,23 @@ static void machvirt_init(MachineState *machine)
         sysbus_realize_and_unref(SYS_BUS_DEVICE(dispcc_dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(dispcc_dev), 0, 0x0af00000);
     }
+
+    /*
+     * DCC-5: generic zero-return stubs for the three MDP physical regions.
+     * These are NOT an MDP implementation — they carry no SDE register
+     * semantics. They exist solely so that Linux ioremap() of these addresses
+     * succeeds and returns a valid kernel VA, allowing sde_power_resource_init()
+     * to reach its clk_get() calls before any real MMIO is read.
+     * Priority -1000 means any future real device mapped over the same range
+     * will take precedence.
+     *
+     *   mdp_phys:    0x0ae00000 .. 0x0ae84208   (SDE MDSS top-level)
+     *   regdma_phys: 0x0aeac000 .. 0x0aeac214   (DMA engine)
+     *   vbif_phys:   0x0aeb0000 .. 0x0aeb2008   (VBIF interconnect)
+     */
+    create_unimplemented_device("qcom-mdp-phys",    0x0ae00000, 0x85000);
+    create_unimplemented_device("qcom-regdma-phys", 0x0aeac000, 0x1000);
+    create_unimplemented_device("qcom-vbif-phys",   0x0aeb0000, 0x3000);
 
     if (machine->nvdimms_state->is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {

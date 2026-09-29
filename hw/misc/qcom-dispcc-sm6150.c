@@ -55,9 +55,16 @@ static inline bool is_rcg_cmd(hwaddr offset)
     case 0x20A8: /* disp_cc_mdss_vsync_clk_src CMD_RCGR */
     case 0x20C0: /* disp_cc_mdss_rot_clk_src CMD_RCGR */
     case 0x20D8: /* disp_cc_mdss_byte0_clk_src CMD_RCGR */
+    case 0x20DC: /* disp_cc_mdss_byte0_clk_src CMD_RCGR */
     case 0x20F0: /* disp_cc_mdss_byte0_intf_clk_src CMD_RCGR */
+    case 0x20F4: /* disp_cc_mdss_dp_link_clk_src CMD_RCGR */
     case 0x2108: /* disp_cc_mdss_esc0_clk_src CMD_RCGR */
+    case 0x2110: /* disp_cc_mdss_dp_pixel_clk_src CMD_RCGR */
     case 0x2120: /* disp_cc_mdss_dp_aux_clk_src CMD_RCGR */
+    case 0x2128: /* disp_cc_mdss_dp_vco_div_clk_src CMD_RCGR */
+    case 0x2140: /* disp_cc_mdss_dp_crypto_clk_src CMD_RCGR */
+    case 0x2158: /* disp_cc_mdss_dp_gtc_clk_src CMD_RCGR */
+    case 0x2170: /* disp_cc_mdss_ahb_clk_src CMD_RCGR */
         return true;
     default:
         return false;
