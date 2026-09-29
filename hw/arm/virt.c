@@ -2483,6 +2483,13 @@ static void machvirt_init(MachineState *machine)
         sysbus_connect_irq(SYS_BUS_DEVICE(kgsl_dev), 1, qdev_get_gpio_in(vms->gic, 224)); /* GMU IRQ (SPI 224) */
     }
 
+    /* Create Qualcomm SM6150 DISPCC clock controller stub at 0x0af00000 */
+    {
+        DeviceState *dispcc_dev = qdev_new("qcom-dispcc-sm6150");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dispcc_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dispcc_dev), 0, 0x0af00000);
+    }
+
     if (machine->nvdimms_state->is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {
             .space_id = AML_AS_SYSTEM_MEMORY,
