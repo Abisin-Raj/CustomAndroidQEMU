@@ -2492,19 +2492,14 @@ static void machvirt_init(MachineState *machine)
     }
 
     /*
-     * DCC-5: generic zero-return stubs for the three MDP physical regions.
-     * These are NOT an MDP implementation — they carry no SDE register
-     * semantics. They exist solely so that Linux ioremap() of these addresses
-     * succeeds and returns a valid kernel VA, allowing sde_power_resource_init()
-     * to reach its clk_get() calls before any real MMIO is read.
-     * Priority -1000 means any future real device mapped over the same range
-     * will take precedence.
-     *
-     *   mdp_phys:    0x0ae00000 .. 0x0ae84208   (SDE MDSS top-level)
-     *   regdma_phys: 0x0aeac000 .. 0x0aeac214   (DMA engine)
-     *   vbif_phys:   0x0aeb0000 .. 0x0aeb2008   (VBIF interconnect)
+     * HW-1: Qualcomm SDE MDP controller stub at 0x0ae00000.
+     * Emulates hardware revision readout register (offset 0x0 = 0x50000000 for SDE 5.0.0).
      */
-    create_unimplemented_device("qcom-mdp-phys",    0x0ae00000, 0x85000);
+    {
+        DeviceState *mdp_dev = qdev_new("qcom-sde-mdp");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(mdp_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(mdp_dev), 0, 0x0ae00000);
+    }
     create_unimplemented_device("qcom-regdma-phys", 0x0aeac000, 0x1000);
     create_unimplemented_device("qcom-vbif-phys",   0x0aeb0000, 0x3000);
 
