@@ -2503,6 +2503,17 @@ static void machvirt_init(MachineState *machine)
     create_unimplemented_device("qcom-regdma-phys", 0x0aeac000, 0x1000);
     create_unimplemented_device("qcom-vbif-phys",   0x0aeb0000, 0x3000);
 
+    /*
+     * HW-4.2: Qualcomm apps-smmu controller stub at 0x15000000.
+     * Emulates identification registers sIDR0 (0x20), sIDR1 (0x24), sIDR2 (0x28)
+     * so that arm_smmu_device_cfg_probe() accepts the device and registers platform_bus_type.
+     */
+    {
+        DeviceState *smmu_dev = qdev_new("qcom-smmu-v500");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(smmu_dev), &error_fatal);
+        sysbus_mmio_map_overlap(SYS_BUS_DEVICE(smmu_dev), 0, 0x15000000, 1);
+    }
+
     if (machine->nvdimms_state->is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {
             .space_id = AML_AS_SYSTEM_MEMORY,

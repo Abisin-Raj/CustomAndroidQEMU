@@ -18,6 +18,7 @@ system_ss.add(files('qcom-spmi-pmic-arb.c'))
 system_ss.add(files('qcom-kgsl.c'))
 system_ss.add(files('qcom-dispcc-sm6150.c'))
 system_ss.add(files('qcom-sde-mdp.c'))
+system_ss.add(files('qcom-smmu-v500.c'))
 specific_ss.add(when: 'CONFIG_QCOM_UFSHC', if_true: files('qcom-ufshc.c'))
 
 system_ss.add(when: 'CONFIG_ARM_V7M', if_true: files('armv7m_ras.c'))
