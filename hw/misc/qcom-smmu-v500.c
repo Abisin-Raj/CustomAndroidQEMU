@@ -9,10 +9,11 @@
  * platform_bus_type.iommu_ops via bus_set_iommu().
  *
  * Identification Register Values:
- *   Offset 0x20 (sIDR0): 0x63106d80
+ *   Offset 0x20 (sIDR0): 0x68106d80
  *     - Bit 30: S2TS = 1 (Stage 2 Translation Support)
  *     - Bit 29: S1TS = 1 (Stage 1 Translation Support)
  *     - Bit 27: SMS  = 1 (Stream Match Support)
+ *     - Bits 25..24: PTFS = 0 (4KB and 64KB page table formats supported, active-low)
  *     - Bit 14: CTTW = 1 (Coherent Translation Table Walk)
  *     - Bits 7..0: NUMSMRG = 0x80 (128 Stream Match Register Groups)
  *   Offset 0x24 (sIDR1): 0x00000020
@@ -46,7 +47,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(QcomSmmuV500State, QCOM_SMMU_V500)
 #define SMMU_REG_sIDR1 0x24
 #define SMMU_REG_sIDR2 0x28
 
-#define SMMU_VAL_sIDR0 0x63106d80U
+#define SMMU_VAL_sIDR0 0x68106d80U
 #define SMMU_VAL_sIDR1 0x00000020U
 #define SMMU_VAL_sIDR2 0x00000055U
 
