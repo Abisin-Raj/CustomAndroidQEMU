@@ -50,15 +50,13 @@ static inline bool is_pll0_reg(hwaddr offset)
 static inline bool is_rcg_cmd(hwaddr offset)
 {
     switch (offset) {
+    case 0x2060: /* disp_cc_mdss_pclk0_clk_src CMD_RCGR */
     case 0x2078: /* disp_cc_mdss_mdp_clk_src CMD_RCGR */
-    case 0x2090: /* disp_cc_mdss_pclk0_clk_src CMD_RCGR */
+    case 0x2090: /* disp_cc_mdss_rot_clk_src CMD_RCGR */
     case 0x20A8: /* disp_cc_mdss_vsync_clk_src CMD_RCGR */
-    case 0x20C0: /* disp_cc_mdss_rot_clk_src CMD_RCGR */
-    case 0x20D8: /* disp_cc_mdss_byte0_clk_src CMD_RCGR */
-    case 0x20DC: /* disp_cc_mdss_byte0_clk_src CMD_RCGR */
-    case 0x20F0: /* disp_cc_mdss_byte0_intf_clk_src CMD_RCGR */
+    case 0x20C0: /* disp_cc_mdss_byte0_clk_src CMD_RCGR */
+    case 0x20DC: /* disp_cc_mdss_esc0_clk_src CMD_RCGR */
     case 0x20F4: /* disp_cc_mdss_dp_link_clk_src CMD_RCGR */
-    case 0x2108: /* disp_cc_mdss_esc0_clk_src CMD_RCGR */
     case 0x2110: /* disp_cc_mdss_dp_pixel_clk_src CMD_RCGR */
     case 0x2120: /* disp_cc_mdss_dp_aux_clk_src CMD_RCGR */
     case 0x2128: /* disp_cc_mdss_dp_vco_div_clk_src CMD_RCGR */
@@ -74,19 +72,21 @@ static inline bool is_rcg_cmd(hwaddr offset)
 static inline bool is_branch_cbcr(hwaddr offset)
 {
     switch (offset) {
-    case 0x2004: /* disp_cc_mdss_ahb_clk */
+    case 0x2004: /* disp_cc_mdss_pclk0_clk */
     case 0x2008: /* disp_cc_mdss_mdp_clk */
     case 0x2010: /* disp_cc_mdss_rot_clk */
     case 0x2018: /* disp_cc_mdss_mdp_lut_clk */
     case 0x2020: /* disp_cc_mdss_vsync_clk */
-    case 0x2024: /* disp_cc_mdss_rscc_ahb_clk */
-    case 0x2028: /* disp_cc_mdss_rscc_xo_clk */
+    case 0x2024: /* disp_cc_mdss_byte0_clk */
+    case 0x2028: /* disp_cc_mdss_byte0_intf_clk */
+    case 0x202c: /* disp_cc_mdss_esc0_clk */
+    case 0x2030: /* disp_cc_mdss_dp_link_clk */
+    case 0x2034: /* disp_cc_mdss_dp_link_intf_clk */
+    case 0x2038: /* disp_cc_mdss_dp_crypto_clk */
+    case 0x203c: /* disp_cc_mdss_dp_pixel_clk */
+    case 0x2040: /* disp_cc_mdss_dp_pixel1_clk */
+    case 0x2044: /* disp_cc_mdss_dp_aux_clk */
     case 0x2048: /* disp_cc_mdss_ahb_clk */
-    case 0x204c: /* disp_cc_mdss_non_gdsc_ahb_clk */
-    case 0x2050: /* disp_cc_mdss_byte0_clk */
-    case 0x2054: /* disp_cc_mdss_byte0_intf_clk */
-    case 0x2058: /* disp_cc_mdss_esc0_clk */
-    case 0x205c: /* disp_cc_mdss_pclk0_clk */
     case 0x6054: /* disp_cc_xo_clk */
         return true;
     default:
@@ -127,9 +127,14 @@ static uint64_t qcom_dispcc_sm6150_read(void *opaque, hwaddr offset, unsigned si
         } else if (is_branch_cbcr(offset)) {
             /*
              * Branch CBCR:
-             *   Bit 31: CLK_OFF = 0 (Clock branch is running / enabled)
+             *   Bit  0: CLK_ENABLE
+             *   Bit 31: CLK_OFF (0 when clock is running / enabled, 1 when halted / disabled)
              */
-            val &= ~0x80000000U;
+            if (val & 0x1) {
+                val &= ~0x80000000U;
+            } else {
+                val |= 0x80000000U;
+            }
         }
         break;
     case 8:
@@ -171,8 +176,15 @@ static void qcom_dispcc_sm6150_write(void *opaque, hwaddr offset,
              */
             val &= ~0x80000001U;
         } else if (is_branch_cbcr(offset)) {
-            /* Preserve enable bits, ensure CLK_OFF (bit 31) remains 0 */
-            val &= ~0x80000000U;
+            /*
+             * Branch CBCR:
+             * Reflect bit 31 CLK_OFF based on enable bit 0.
+             */
+            if (val & 0x1) {
+                val &= ~0x80000000U;
+            } else {
+                val |= 0x80000000U;
+            }
         }
         /*
          * Note: CFG_RCGR (e.g. 0x207C, 0x20AC) and all other registers
