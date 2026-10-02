@@ -2500,6 +2500,26 @@ static void machvirt_init(MachineState *machine)
         sysbus_realize_and_unref(SYS_BUS_DEVICE(mdp_dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(mdp_dev), 0, 0x0ae00000);
     }
+
+    /*
+     * D7.2: Qualcomm SM6150 DSI controller at 0x0ae94000.
+     * Emulates mdss_dsi_ctrl0 hardware registers (INT_CTRL, HW_VERSION, etc.).
+     */
+    {
+        DeviceState *dsi_dev = qdev_new("qcom-dsi-ctrl");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dsi_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dsi_dev), 0, 0x0ae94000);
+    }
+
+    /*
+     * D7.3: Qualcomm SM6150 DSI 14nm PHY at 0x0ae94400.
+     * Emulates mdss_dsi_phy0 hardware registers (VREG_CNTRL, CMN_CTRL, etc.).
+     */
+    {
+        DeviceState *dsi_phy_dev = qdev_new("qcom-dsi-phy");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dsi_phy_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dsi_phy_dev), 0, 0x0ae94400);
+    }
     create_unimplemented_device("qcom-regdma-phys", 0x0aeac000, 0x1000);
     create_unimplemented_device("qcom-vbif-phys",   0x0aeb0000, 0x3000);
 
