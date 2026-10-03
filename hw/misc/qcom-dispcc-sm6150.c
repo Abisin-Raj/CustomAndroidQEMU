@@ -148,6 +148,17 @@ static uint64_t qcom_dispcc_sm6150_read(void *opaque, hwaddr offset, unsigned si
         break;
     }
 
+    if ((offset >= 0x20c0 && offset <= 0x20c4) || offset == 0x2024 || offset == 0x2028) {
+        FILE *f = fopen("c:/qemu_work/dispcc_trace.log", "a");
+        if (f) {
+            fprintf(f, "[DISPCC MMIO] READ  offset=0x%04llx size=%u val=0x%08llx\n",
+                    (unsigned long long)offset, size, (unsigned long long)val);
+            fclose(f);
+        }
+        fprintf(stderr, "[DISPCC MMIO] READ  offset=0x%04llx size=%u val=0x%08llx\n",
+                (unsigned long long)offset, size, (unsigned long long)val);
+    }
+
     return val;
 }
 
@@ -186,6 +197,19 @@ static void qcom_dispcc_sm6150_write(void *opaque, hwaddr offset,
                 val |= 0x80000000U;
             }
         }
+
+        if ((offset >= 0x20c0 && offset <= 0x20c4) || offset == 0x2024 || offset == 0x2028) {
+            uint32_t old_reg = *(uint32_t *)(s->regs + offset);
+            FILE *f = fopen("c:/qemu_work/dispcc_trace.log", "a");
+            if (f) {
+                fprintf(f, "[DISPCC MMIO] WRITE offset=0x%04llx size=%u old=0x%08x input=0x%08llx final=0x%08x\n",
+                        (unsigned long long)offset, size, old_reg, (unsigned long long)value, val);
+                fclose(f);
+            }
+            fprintf(stderr, "[DISPCC MMIO] WRITE offset=0x%04llx size=%u old=0x%08x input=0x%08llx final=0x%08x\n",
+                    (unsigned long long)offset, size, old_reg, (unsigned long long)value, val);
+        }
+
         /*
          * Note: CFG_RCGR (e.g. 0x207C, 0x20AC) and all other registers
          * retain their exact written value.

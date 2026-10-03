@@ -2520,7 +2520,14 @@ static void machvirt_init(MachineState *machine)
         sysbus_realize_and_unref(SYS_BUS_DEVICE(dsi_phy_dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(dsi_phy_dev), 0, 0x0ae94400);
     }
-    create_unimplemented_device("qcom-regdma-phys", 0x0aeac000, 0x1000);
+    /*
+     * D7.9: Qualcomm SDE REGDMA controller at 0x0aeac000.
+     */
+    {
+        DeviceState *regdma_dev = qdev_new("qcom-sde-regdma");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(regdma_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(regdma_dev), 0, 0x0aeac000);
+    }
     create_unimplemented_device("qcom-vbif-phys",   0x0aeb0000, 0x3000);
 
     /*

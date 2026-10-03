@@ -59,6 +59,23 @@ static uint64_t qcom_sde_mdp_read(void *opaque, hwaddr offset, unsigned size)
     return val;
 }
 
+static void sde_mdp_log(const char *fmt, ...)
+{
+    static FILE *f = NULL;
+    if (!f) {
+        f = fopen("C:\\qemu_work\\sde_regdma.log", "a");
+    }
+    if (f) {
+        int64_t now_us = g_get_real_time();
+        va_list ap;
+        fprintf(f, "[%lld us] ", (long long)now_us);
+        va_start(ap, fmt);
+        vfprintf(f, fmt, ap);
+        va_end(ap);
+        fflush(f);
+    }
+}
+
 static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsigned size)
 {
     QcomSdeMdpState *s = opaque;
@@ -68,6 +85,25 @@ static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsign
                       "qcom-sde-mdp: write out of range: offset=0x%" HWADDR_PRIx " size=%u\n",
                       offset, size);
         return;
+    }
+
+    if (offset >= 0x2000 && offset < 0x2200) {
+        if (offset == 0x20d4) {
+            sde_mdp_log("WRITE CTL0   [0x0ae020d4] (CTL0_QUEUE_TRIGGER) size=%u <- 0x%08llx\n",
+                        size, (unsigned long long)val);
+        } else if (offset == 0x2018) {
+            sde_mdp_log("WRITE CTL0   [0x0ae02018] (CTL0_FLUSH) size=%u <- 0x%08llx\n",
+                        size, (unsigned long long)val);
+        } else if (offset == 0x201c) {
+            sde_mdp_log("WRITE CTL0   [0x0ae0201c] (CTL0_START) size=%u <- 0x%08llx\n",
+                        size, (unsigned long long)val);
+        } else if (offset == 0x20d0) {
+            sde_mdp_log("WRITE CTL0   [0x0ae020d0] (CTL0_PREPARE) size=%u <- 0x%08llx\n",
+                        size, (unsigned long long)val);
+        } else {
+            sde_mdp_log("WRITE CTL0   [0x0ae0%04lx] size=%u <- 0x%08llx\n",
+                        (unsigned long)offset, size, (unsigned long long)val);
+        }
     }
 
     qemu_log_mask(LOG_UNIMP,
