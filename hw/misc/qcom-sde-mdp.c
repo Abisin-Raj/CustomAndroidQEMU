@@ -16,6 +16,7 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qapi/error.h"
+#include "hw/misc/qcom-sde-regdma.h"
 
 #define TYPE_QCOM_SDE_MDP "qcom-sde-mdp"
 OBJECT_DECLARE_SIMPLE_TYPE(QcomSdeMdpState, QCOM_SDE_MDP)
@@ -33,6 +34,23 @@ struct QcomSdeMdpState {
     /* Backing store for registers */
     uint8_t regs[SDE_MDP_SIZE];
 };
+
+static void G_GNUC_PRINTF(1, 2) sde_mdp_log(const char *fmt, ...)
+{
+    static FILE *f = NULL;
+    if (!f) {
+        f = fopen("C:\\qemu_work\\sde_regdma.log", "a");
+    }
+    if (f) {
+        int64_t now_us = g_get_real_time();
+        va_list ap;
+        fprintf(f, "[%lld us] ", (long long)now_us);
+        va_start(ap, fmt);
+        vfprintf(f, fmt, ap);
+        va_end(ap);
+        fflush(f);
+    }
+}
 
 static uint64_t qcom_sde_mdp_read(void *opaque, hwaddr offset, unsigned size)
 {
@@ -52,28 +70,18 @@ static uint64_t qcom_sde_mdp_read(void *opaque, hwaddr offset, unsigned size)
         memcpy(&val, &s->regs[offset], size);
     }
 
+    if (offset == 0x1014) {
+        sde_mdp_log("READ  MDP    [0x0ae01014] (INTR_STATUS) -> 0x%08x (INTF_1_VSYNC_bit27=%u)\n",
+                    val, (val >> 27) & 1);
+    } else if (offset == 0x1010) {
+        sde_mdp_log("READ  MDP    [0x0ae01010] (INTR_EN) -> 0x%08x\n", val);
+    }
+
     qemu_log_mask(LOG_UNIMP,
                   "qcom-sde-mdp: read offset=0x%" HWADDR_PRIx " size=%u val=0x%08x\n",
                   offset, size, val);
 
     return val;
-}
-
-static void sde_mdp_log(const char *fmt, ...)
-{
-    static FILE *f = NULL;
-    if (!f) {
-        f = fopen("C:\\qemu_work\\sde_regdma.log", "a");
-    }
-    if (f) {
-        int64_t now_us = g_get_real_time();
-        va_list ap;
-        fprintf(f, "[%lld us] ", (long long)now_us);
-        va_start(ap, fmt);
-        vfprintf(f, fmt, ap);
-        va_end(ap);
-        fflush(f);
-    }
 }
 
 static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsigned size)
@@ -91,6 +99,9 @@ static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsign
         if (offset == 0x20d4) {
             sde_mdp_log("WRITE CTL0   [0x0ae020d4] (CTL0_QUEUE_TRIGGER) size=%u <- 0x%08llx\n",
                         size, (unsigned long long)val);
+            if (val & 0x1) {
+                qcom_sde_regdma_trigger(0, 0);
+            }
         } else if (offset == 0x2018) {
             sde_mdp_log("WRITE CTL0   [0x0ae02018] (CTL0_FLUSH) size=%u <- 0x%08llx\n",
                         size, (unsigned long long)val);
@@ -104,6 +115,20 @@ static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsign
             sde_mdp_log("WRITE CTL0   [0x0ae0%04lx] size=%u <- 0x%08llx\n",
                         (unsigned long)offset, size, (unsigned long long)val);
         }
+    } else if (offset == 0x1010) {
+        sde_mdp_log("WRITE MDP    [0x0ae01010] (INTR_EN) size=%u <- 0x%08llx (INTF_1_VSYNC_bit27=%llu)\n",
+                    size, (unsigned long long)val, ((unsigned long long)val >> 27) & 1);
+    } else if (offset == 0x1018) {
+        sde_mdp_log("WRITE MDP    [0x0ae01018] (INTR_CLEAR) size=%u <- 0x%08llx (INTF_1_VSYNC_bit27=%llu)\n",
+                    size, (unsigned long long)val, ((unsigned long long)val >> 27) & 1);
+        uint32_t *status = (uint32_t *)&s->regs[0x1014];
+        *status &= ~(uint32_t)val;
+    } else if (offset == 0x6b800) {
+        sde_mdp_log("WRITE INTF_1 [0x0ae6b800] (TIMING_ENGINE_EN) size=%u <- 0x%08llx\n",
+                    size, (unsigned long long)val);
+    } else if (offset >= 0x6b800 && offset < 0x6b900) {
+        sde_mdp_log("WRITE INTF_1 [0x0ae%05lx] (+0x%lx) size=%u <- 0x%08llx\n",
+                    (unsigned long)offset, (unsigned long)(offset - 0x6b800), size, (unsigned long long)val);
     }
 
     qemu_log_mask(LOG_UNIMP,

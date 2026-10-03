@@ -15,6 +15,7 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qapi/error.h"
+#include "hw/misc/qcom-sde-regdma.h"
 
 #define TYPE_QCOM_SDE_REGDMA "qcom-sde-regdma"
 OBJECT_DECLARE_SIMPLE_TYPE(QcomSdeRegDmaState, QCOM_SDE_REGDMA)
@@ -28,7 +29,9 @@ struct QcomSdeRegDmaState {
     uint8_t regs[SDE_REGDMA_SIZE];
 };
 
-static void regdma_log(const char *fmt, ...)
+static QcomSdeRegDmaState *s_regdma = NULL;
+
+static void G_GNUC_PRINTF(1, 2) regdma_log(const char *fmt, ...)
 {
     static FILE *f = NULL;
     if (!f) {
@@ -43,6 +46,31 @@ static void regdma_log(const char *fmt, ...)
         va_end(ap);
         fflush(f);
     }
+}
+
+void qcom_sde_regdma_trigger(uint32_t ctl_idx, uint32_t queue_idx)
+{
+    if (!s_regdma) {
+        return;
+    }
+    /*
+     * In sde_hw_reg_dma_v1.c:
+     * ctl_trigger_done_mask[CTL_0][DMA_CTL_QUEUE0] = BIT(16)
+     * For CTL_0 Queue 0, bit 16 of REGDMA_INTR_STATUS (0x160) indicates completion.
+     */
+    uint32_t bit = 16;
+    if (ctl_idx == 0 && queue_idx == 0) {
+        bit = 16;
+    } else if (ctl_idx == 0 && queue_idx == 1) {
+        bit = 21;
+    } else {
+        bit = 16 + ctl_idx;
+    }
+
+    uint32_t *status = (uint32_t *)&s_regdma->regs[0x160];
+    *status |= (1U << bit);
+    regdma_log("  -> TRIGGER EXECUTE: CTL_%u Queue_%u asserted STATUS[0x0aeac160] bit %u (val=0x%08x)\n",
+               ctl_idx, queue_idx, bit, *status);
 }
 
 static const char *regdma_reg_name(hwaddr offset)
@@ -138,6 +166,7 @@ static void qcom_sde_regdma_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->mmio, OBJECT(s), &qcom_sde_regdma_ops, s,
                           "qcom-sde-regdma", SDE_REGDMA_SIZE);
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
+    s_regdma = s;
 }
 
 static void qcom_sde_regdma_class_init(ObjectClass *klass, void *data)
