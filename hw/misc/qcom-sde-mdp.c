@@ -12,9 +12,11 @@
 
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"
+#include "hw/irq.h"
 #include "hw/qdev-properties.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
+#include "qemu/timer.h"
 #include "qapi/error.h"
 #include "hw/misc/qcom-sde-regdma.h"
 
@@ -27,9 +29,14 @@ OBJECT_DECLARE_SIMPLE_TYPE(QcomSdeMdpState, QCOM_SDE_MDP)
 /* Default SDE hardware revision: 0x50000000 (SDE 5.0.0) */
 #define SDE_MDP_DEFAULT_HW_REV 0x50000000U
 
+/* Frame interval: 3,050,432 clocks @ 183.025 MHz = 16,666,423 ns (~60.0003 Hz) */
+#define VSYNC_INTERVAL_NS 16666423ULL
+
 struct QcomSdeMdpState {
     SysBusDevice parent_obj;
     MemoryRegion mmio;
+    qemu_irq irq;
+    QEMUTimer *vsync_timer;
     uint32_t hw_rev;
     /* Backing store for registers */
     uint8_t regs[SDE_MDP_SIZE];
@@ -52,6 +59,42 @@ static void G_GNUC_PRINTF(1, 2) sde_mdp_log(const char *fmt, ...)
     }
 }
 
+static void qcom_sde_mdp_vsync_tick(void *opaque)
+{
+    QcomSdeMdpState *s = opaque;
+
+    /* 1. Increment INTF_FRAME_COUNT at offset 0x6b8ac */
+    uint32_t *frame_cnt = (uint32_t *)&s->regs[0x6b8ac];
+    (*frame_cnt)++;
+
+    /* 2. Set INTF_STATUS at offset 0x6ba6c (bit 0 = is_en) */
+    uint32_t *intf_status = (uint32_t *)&s->regs[0x6ba6c];
+    *intf_status |= 1U;
+
+    /* 3. Set MDP INTR_STATUS bit 27 (INTF_1_VSYNC) at offset 0x1014 */
+    uint32_t *intr_status = (uint32_t *)&s->regs[0x1014];
+    *intr_status |= (1U << 27);
+
+    /* 4. Propagate through HW_INTR_STATUS and IRQ if INTR_EN has bit 27 */
+    uint32_t intr_en = *(uint32_t *)&s->regs[0x1010];
+    if (intr_en & (1U << 27)) {
+        uint32_t *hw_intr_status = (uint32_t *)&s->regs[0x0010];
+        *hw_intr_status |= 1U; /* IRQ_SOURCE_MDP */
+
+        sde_mdp_log("VSYNC TICK: frame=%u, SDE IRQ pulsed (INTR_STATUS[27]=1, HW_INTR_STATUS[0]=1)\n",
+                    *frame_cnt);
+        qemu_irq_pulse(s->irq);
+    } else {
+        sde_mdp_log("VSYNC TICK: frame=%u, INTR_EN[27]=0 (no IRQ)\n", *frame_cnt);
+    }
+
+    /* 5. Reschedule timer if TIMING_ENGINE_EN is still set */
+    uint32_t timing_en = *(uint32_t *)&s->regs[0x6b800];
+    if (timing_en & 1U) {
+        timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + VSYNC_INTERVAL_NS);
+    }
+}
+
 static uint64_t qcom_sde_mdp_read(void *opaque, hwaddr offset, unsigned size)
 {
     QcomSdeMdpState *s = opaque;
@@ -66,11 +109,23 @@ static uint64_t qcom_sde_mdp_read(void *opaque, hwaddr offset, unsigned size)
 
     if (offset == 0x0) {
         val = s->hw_rev;
+    } else if (offset == 0x0010) {
+        /* HW_INTR_STATUS: bit 0 is IRQ_SOURCE_MDP if any enabled MDP interrupt is active */
+        uint32_t mdp_status = *(uint32_t *)&s->regs[0x1014];
+        uint32_t mdp_en = *(uint32_t *)&s->regs[0x1010];
+        val = 0;
+        if (mdp_status & mdp_en) {
+            val |= 1U; /* IRQ_SOURCE_MDP */
+        }
+        memcpy(&s->regs[0x0010], &val, sizeof(val));
     } else {
         memcpy(&val, &s->regs[offset], size);
     }
 
-    if (offset == 0x1014) {
+    if (offset == 0x0010) {
+        sde_mdp_log("READ  MDSS   [0x0ae00010] (HW_INTR_STATUS) -> 0x%08x (IRQ_SOURCE_MDP_bit0=%u)\n",
+                    val, val & 1);
+    } else if (offset == 0x1014) {
         sde_mdp_log("READ  MDP    [0x0ae01014] (INTR_STATUS) -> 0x%08x (INTF_1_VSYNC_bit27=%u)\n",
                     val, (val >> 27) & 1);
     } else if (offset == 0x1010) {
@@ -123,9 +178,28 @@ static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsign
                     size, (unsigned long long)val, ((unsigned long long)val >> 27) & 1);
         uint32_t *status = (uint32_t *)&s->regs[0x1014];
         *status &= ~(uint32_t)val;
+        uint32_t intr_en = *(uint32_t *)&s->regs[0x1010];
+        uint32_t *hw_intr_status = (uint32_t *)&s->regs[0x0010];
+        if (!(*status & intr_en)) {
+            *hw_intr_status &= ~1U;
+        }
     } else if (offset == 0x6b800) {
-        sde_mdp_log("WRITE INTF_1 [0x0ae6b800] (TIMING_ENGINE_EN) size=%u <- 0x%08llx\n",
-                    size, (unsigned long long)val);
+        uint32_t prev = *(uint32_t *)&s->regs[0x6b800];
+        bool was_en = (prev & 1U);
+        bool now_en = (val & 1U);
+
+        sde_mdp_log("WRITE INTF_1 [0x0ae6b800] (TIMING_ENGINE_EN) size=%u <- 0x%08llx (%s -> %s)\n",
+                    size, (unsigned long long)val, was_en ? "EN" : "DIS", now_en ? "EN" : "DIS");
+
+        if (!was_en && now_en) {
+            /* 0 -> 1 transition: schedule first tick after 1 frame period (~16.666 ms) */
+            timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + VSYNC_INTERVAL_NS);
+            sde_mdp_log("  -> VSYNC timer started (interval=%llu ns)\n", (unsigned long long)VSYNC_INTERVAL_NS);
+        } else if (was_en && !now_en) {
+            /* 1 -> 0 transition: stop timer */
+            timer_del(s->vsync_timer);
+            sde_mdp_log("  -> VSYNC timer stopped\n");
+        }
     } else if (offset >= 0x6b800 && offset < 0x6b900) {
         sde_mdp_log("WRITE INTF_1 [0x0ae%05lx] (+0x%lx) size=%u <- 0x%08llx\n",
                     (unsigned long)offset, (unsigned long)(offset - 0x6b800), size, (unsigned long long)val);
@@ -156,6 +230,9 @@ static void qcom_sde_mdp_reset(DeviceState *dev)
 {
     QcomSdeMdpState *s = QCOM_SDE_MDP(dev);
 
+    if (s->vsync_timer) {
+        timer_del(s->vsync_timer);
+    }
     memset(s->regs, 0, sizeof(s->regs));
     *(uint32_t *)&s->regs[0] = s->hw_rev;
 }
@@ -167,6 +244,9 @@ static void qcom_sde_mdp_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->mmio, OBJECT(s), &qcom_sde_mdp_ops, s,
                           "qcom-sde-mdp", SDE_MDP_SIZE);
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
+    sysbus_init_irq(SYS_BUS_DEVICE(s), &s->irq);
+
+    s->vsync_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, qcom_sde_mdp_vsync_tick, s);
 
     *(uint32_t *)&s->regs[0] = s->hw_rev;
 }

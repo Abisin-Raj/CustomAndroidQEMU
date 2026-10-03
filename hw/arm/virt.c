@@ -2499,6 +2499,7 @@ static void machvirt_init(MachineState *machine)
         DeviceState *mdp_dev = qdev_new("qcom-sde-mdp");
         sysbus_realize_and_unref(SYS_BUS_DEVICE(mdp_dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(mdp_dev), 0, 0x0ae00000);
+        sysbus_connect_irq(SYS_BUS_DEVICE(mdp_dev), 0, qdev_get_gpio_in(vms->gic, 83)); /* SDE MDSS IRQ (SPI 83) */
     }
 
     /*
