@@ -139,8 +139,11 @@ static void arm_virt_compat_set(MachineClass *mc)
     DEFINE_VIRT_MACHINE_IMPL(false, major, minor)
 
 
-/* Number of external interrupt lines to configure the GIC with */
-#define NUM_IRQS 256
+/* Number of external interrupt lines to configure the GIC with.
+ * Must be a multiple of 32 for GICv3 (ITLinesNumber). 672 is the minimum
+ * capacity required to expose Qualcomm SM6150 SDHCI SPI 641 and 644.
+ */
+#define NUM_IRQS 672
 
 #define PLATFORM_BUS_NUM_IRQS 64
 
@@ -2462,8 +2465,8 @@ static void machvirt_init(MachineState *machine)
         sysbus_mmio_map(SYS_BUS_DEVICE(sdhci_dev), 0, 0x7c4000); /* Host Controller */
         sysbus_mmio_map(SYS_BUS_DEVICE(sdhci_dev), 1, 0x7c5000); /* CMDQ Engine */
         sysbus_mmio_map(SYS_BUS_DEVICE(sdhci_dev), 2, 0x7c8000); /* Storage ICE */
-        sysbus_connect_irq(SYS_BUS_DEVICE(sdhci_dev), 0, qdev_get_gpio_in(vms->gic, 210)); /* hc_irq (GIC SPI 210) */
-        sysbus_connect_irq(SYS_BUS_DEVICE(sdhci_dev), 1, qdev_get_gpio_in(vms->gic, 214)); /* pwr_irq (GIC SPI 214) */
+        sysbus_connect_irq(SYS_BUS_DEVICE(sdhci_dev), 0, qdev_get_gpio_in(vms->gic, 641)); /* hc_irq (GIC SPI 641) */
+        sysbus_connect_irq(SYS_BUS_DEVICE(sdhci_dev), 1, qdev_get_gpio_in(vms->gic, 644)); /* pwr_irq (GIC SPI 644) */
 
         /* Attach SD/eMMC block device if -drive if=sd was supplied */
         DriveInfo *dinfo = drive_get(IF_SD, 0, 0);
