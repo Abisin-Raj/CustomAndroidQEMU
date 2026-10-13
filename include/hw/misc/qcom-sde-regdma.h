@@ -11,5 +11,6 @@
 #include <stdint.h>
 
 void qcom_sde_regdma_trigger(uint32_t ctl_idx, uint32_t queue_idx);
+void qcom_sde_mdp_trigger_frame_commit(void);
 
 #endif /* HW_MISC_QCOM_SDE_REGDMA_H */

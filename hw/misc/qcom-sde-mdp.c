@@ -19,6 +19,8 @@
 #include "qemu/timer.h"
 #include "qapi/error.h"
 #include "hw/misc/qcom-sde-regdma.h"
+#include "ui/console.h"
+#include "qom/object.h"
 
 #define TYPE_QCOM_SDE_MDP "qcom-sde-mdp"
 OBJECT_DECLARE_SIMPLE_TYPE(QcomSdeMdpState, QCOM_SDE_MDP)
@@ -40,7 +42,11 @@ struct QcomSdeMdpState {
     uint32_t hw_rev;
     /* Backing store for registers */
     uint8_t regs[SDE_MDP_SIZE];
+    uint64_t commit_count;
+    uint64_t refresh_count;
 };
+
+static QcomSdeMdpState *s_sde_mdp = NULL;
 
 static void G_GNUC_PRINTF(1, 2) sde_mdp_log(const char *fmt, ...)
 {
@@ -56,6 +62,50 @@ static void G_GNUC_PRINTF(1, 2) sde_mdp_log(const char *fmt, ...)
         vfprintf(f, fmt, ap);
         va_end(ap);
         fflush(f);
+    }
+}
+
+static void qcom_sde_mdp_notify_commit(QcomSdeMdpState *s, const char *trigger_name, uint64_t val)
+{
+    s->commit_count++;
+
+    FILE *f_commit = fopen("C:\\qemu_work\\phase18_commit.log", "a");
+    if (f_commit) {
+        int64_t now_us = g_get_real_time();
+        fprintf(f_commit, "[%lld us] SDE COMMIT #%" PRIu64 " detected via %s (val=0x%08" PRIx64 ")\n",
+                (long long)now_us, s->commit_count, trigger_name, val);
+    }
+
+    sde_mdp_log("SDE COMMIT #%" PRIu64 " detected via %s (val=0x%08" PRIx64 ")\n",
+                s->commit_count, trigger_name, val);
+
+    /* Trigger display refresh through QEMU console presenter */
+    QemuConsole *con = qemu_console_lookup_by_index(0);
+    if (con) {
+        graphic_hw_update(con);
+        s->refresh_count++;
+        if (f_commit) {
+            fprintf(f_commit, "  -> DISPLAY REFRESH #%" PRIu64 " triggered (console=%p)\n",
+                    s->refresh_count, (void *)con);
+        }
+        sde_mdp_log("  -> DISPLAY REFRESH #%" PRIu64 " triggered (console=%p)\n",
+                    s->refresh_count, (void *)con);
+    } else {
+        if (f_commit) {
+            fprintf(f_commit, "  -> WARNING: Console 0 not found, refresh skipped\n");
+        }
+    }
+
+    if (f_commit) {
+        fflush(f_commit);
+        fclose(f_commit);
+    }
+}
+
+void qcom_sde_mdp_trigger_frame_commit(void)
+{
+    if (s_sde_mdp) {
+        qcom_sde_mdp_notify_commit(s_sde_mdp, "API_TRIGGER", 1);
     }
 }
 
@@ -156,13 +206,20 @@ static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsign
                         size, (unsigned long long)val);
             if (val & 0x1) {
                 qcom_sde_regdma_trigger(0, 0);
+                qcom_sde_mdp_notify_commit(s, "CTL0_QUEUE_TRIGGER (0x20d4)", val);
             }
         } else if (offset == 0x2018) {
             sde_mdp_log("WRITE CTL0   [0x0ae02018] (CTL0_FLUSH) size=%u <- 0x%08llx\n",
                         size, (unsigned long long)val);
+            if (val != 0) {
+                qcom_sde_mdp_notify_commit(s, "CTL0_FLUSH (0x2018)", val);
+            }
         } else if (offset == 0x201c) {
             sde_mdp_log("WRITE CTL0   [0x0ae0201c] (CTL0_START) size=%u <- 0x%08llx\n",
                         size, (unsigned long long)val);
+            if (val != 0) {
+                qcom_sde_mdp_notify_commit(s, "CTL0_START (0x201c)", val);
+            }
         } else if (offset == 0x20d0) {
             sde_mdp_log("WRITE CTL0   [0x0ae020d0] (CTL0_PREPARE) size=%u <- 0x%08llx\n",
                         size, (unsigned long long)val);
@@ -235,6 +292,8 @@ static void qcom_sde_mdp_reset(DeviceState *dev)
     }
     memset(s->regs, 0, sizeof(s->regs));
     *(uint32_t *)&s->regs[0] = s->hw_rev;
+    s->commit_count = 0;
+    s->refresh_count = 0;
 }
 
 static void qcom_sde_mdp_realize(DeviceState *dev, Error **errp)
@@ -249,6 +308,13 @@ static void qcom_sde_mdp_realize(DeviceState *dev, Error **errp)
     s->vsync_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, qcom_sde_mdp_vsync_tick, s);
 
     *(uint32_t *)&s->regs[0] = s->hw_rev;
+
+    s_sde_mdp = s;
+    s->commit_count = 0;
+    s->refresh_count = 0;
+
+    object_property_add_uint64_ptr(OBJECT(s), "commit-count", &s->commit_count, OBJ_PROP_FLAG_READ);
+    object_property_add_uint64_ptr(OBJECT(s), "refresh-count", &s->refresh_count, OBJ_PROP_FLAG_READ);
 }
 
 static Property qcom_sde_mdp_properties[] = {

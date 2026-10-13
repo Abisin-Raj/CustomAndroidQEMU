@@ -17,14 +17,19 @@ struct RAMFBStandaloneState {
     QemuConsole *con;
     RAMFBState *state;
     bool migrate;
+    bool diag_mode;
+    uint64_t diag_addr;
+    uint32_t diag_width;
+    uint32_t diag_height;
 };
 
 static void display_update_wrapper(void *dev)
 {
     RAMFBStandaloneState *ramfb = RAMFB(dev);
 
-    if (0 /* native driver active */) {
-        /* non-standalone device would run native display update here */;
+    if (ramfb->diag_mode) {
+        ramfb_diag_update(ramfb->con, ramfb->state, ramfb->diag_addr,
+                          ramfb->diag_width, ramfb->diag_height);
     } else {
         ramfb_display_update(ramfb->con, ramfb->state);
     }
@@ -62,6 +67,10 @@ static const VMStateDescription ramfb_dev_vmstate = {
 
 static Property ramfb_properties[] = {
     DEFINE_PROP_BOOL("x-migrate", RAMFBStandaloneState, migrate,  true),
+    DEFINE_PROP_BOOL("x-diag-mode", RAMFBStandaloneState, diag_mode, false),
+    DEFINE_PROP_UINT64("x-diag-addr", RAMFBStandaloneState, diag_addr, 0x7f000000ULL),
+    DEFINE_PROP_UINT32("x-diag-width", RAMFBStandaloneState, diag_width, 640),
+    DEFINE_PROP_UINT32("x-diag-height", RAMFBStandaloneState, diag_height, 480),
     DEFINE_PROP_END_OF_LIST(),
 };
 

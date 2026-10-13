@@ -6,6 +6,8 @@
 /* ramfb.c */
 typedef struct RAMFBState RAMFBState;
 void ramfb_display_update(QemuConsole *con, RAMFBState *s);
+void ramfb_diag_update(QemuConsole *con, RAMFBState *s, hwaddr addr,
+                       uint32_t width, uint32_t height);
 RAMFBState *ramfb_setup(Error **errp);
 
 extern const VMStateDescription ramfb_vmstate;
