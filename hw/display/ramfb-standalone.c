@@ -21,13 +21,27 @@ struct RAMFBStandaloneState {
     uint64_t diag_addr;
     uint32_t diag_width;
     uint32_t diag_height;
+    bool export_fb;
+    uint64_t export_addr;
+    uint32_t export_buf_width;
+    uint32_t export_buf_height;
+    uint32_t export_width;
+    uint32_t export_height;
+    bool export_ubwc;
+    uint64_t export_count;
 };
 
 static void display_update_wrapper(void *dev)
 {
     RAMFBStandaloneState *ramfb = RAMFB(dev);
 
-    if (ramfb->diag_mode) {
+    if (ramfb->export_fb) {
+        ramfb_export_update(ramfb->con, ramfb->state, ramfb->export_addr,
+                            ramfb->export_buf_width, ramfb->export_buf_height,
+                            ramfb->export_width, ramfb->export_height,
+                            ramfb->export_ubwc);
+        ramfb->export_count++;
+    } else if (ramfb->diag_mode) {
         ramfb_diag_update(ramfb->con, ramfb->state, ramfb->diag_addr,
                           ramfb->diag_width, ramfb->diag_height);
     } else {
@@ -45,6 +59,8 @@ static void ramfb_realizefn(DeviceState *dev, Error **errp)
 
     ramfb->con = graphic_console_init(dev, 0, &wrapper_ops, dev);
     ramfb->state = ramfb_setup(errp);
+    ramfb->export_count = 0;
+    object_property_add_uint64_ptr(OBJECT(dev), "export-count", &ramfb->export_count, OBJ_PROP_FLAG_READ);
 }
 
 static bool migrate_needed(void *opaque)
@@ -71,6 +87,13 @@ static Property ramfb_properties[] = {
     DEFINE_PROP_UINT64("x-diag-addr", RAMFBStandaloneState, diag_addr, 0x7f000000ULL),
     DEFINE_PROP_UINT32("x-diag-width", RAMFBStandaloneState, diag_width, 640),
     DEFINE_PROP_UINT32("x-diag-height", RAMFBStandaloneState, diag_height, 480),
+    DEFINE_PROP_BOOL("x-export-fb", RAMFBStandaloneState, export_fb, false),
+    DEFINE_PROP_UINT64("x-export-addr", RAMFBStandaloneState, export_addr, 0xe7e00000ULL),
+    DEFINE_PROP_UINT32("x-export-buf-width", RAMFBStandaloneState, export_buf_width, 1088),
+    DEFINE_PROP_UINT32("x-export-buf-height", RAMFBStandaloneState, export_buf_height, 2352),
+    DEFINE_PROP_UINT32("x-export-width", RAMFBStandaloneState, export_width, 1080),
+    DEFINE_PROP_UINT32("x-export-height", RAMFBStandaloneState, export_height, 2340),
+    DEFINE_PROP_BOOL("x-export-ubwc", RAMFBStandaloneState, export_ubwc, true),
     DEFINE_PROP_END_OF_LIST(),
 };
 

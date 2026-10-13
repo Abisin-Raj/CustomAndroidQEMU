@@ -109,6 +109,19 @@ void qcom_sde_mdp_trigger_frame_commit(void)
     }
 }
 
+static bool qcom_sde_mdp_get_trigger_commit(Object *obj, Error **errp)
+{
+    return false;
+}
+
+static void qcom_sde_mdp_set_trigger_commit(Object *obj, bool val, Error **errp)
+{
+    QcomSdeMdpState *s = QCOM_SDE_MDP(obj);
+    if (val) {
+        qcom_sde_mdp_notify_commit(s, "QOM_TRIGGER (trigger-commit)", 1);
+    }
+}
+
 static void qcom_sde_mdp_vsync_tick(void *opaque)
 {
     QcomSdeMdpState *s = opaque;
@@ -220,6 +233,12 @@ static void qcom_sde_mdp_write(void *opaque, hwaddr offset, uint64_t val, unsign
             if (val != 0) {
                 qcom_sde_mdp_notify_commit(s, "CTL0_START (0x201c)", val);
             }
+        } else if (offset == 0x2000) {
+            sde_mdp_log("WRITE CTL0   [0x0ae02000] (CTL0_LAYER_0) size=%u <- 0x%08llx\n",
+                        size, (unsigned long long)val);
+            if (val != 0) {
+                qcom_sde_mdp_notify_commit(s, "CTL0_LAYER_0 (0x2000)", val);
+            }
         } else if (offset == 0x20d0) {
             sde_mdp_log("WRITE CTL0   [0x0ae020d0] (CTL0_PREPARE) size=%u <- 0x%08llx\n",
                         size, (unsigned long long)val);
@@ -315,6 +334,9 @@ static void qcom_sde_mdp_realize(DeviceState *dev, Error **errp)
 
     object_property_add_uint64_ptr(OBJECT(s), "commit-count", &s->commit_count, OBJ_PROP_FLAG_READ);
     object_property_add_uint64_ptr(OBJECT(s), "refresh-count", &s->refresh_count, OBJ_PROP_FLAG_READ);
+    object_property_add_bool(OBJECT(s), "trigger-commit",
+                             qcom_sde_mdp_get_trigger_commit,
+                             qcom_sde_mdp_set_trigger_commit);
 }
 
 static Property qcom_sde_mdp_properties[] = {

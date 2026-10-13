@@ -35,6 +35,9 @@ struct RAMFBState {
     uint32_t width, height;
     struct RAMFBCfg cfg;
     bool diag_initialized;
+    uint32_t *export_buf;
+    size_t export_buf_size;
+    uint64_t export_count;
 };
 
 static uint32_t ramfb_calc_crc32(const uint8_t *data, size_t len)
@@ -257,6 +260,155 @@ void ramfb_diag_update(QemuConsole *con, RAMFBState *s, hwaddr addr,
     }
 
     /* simple full screen update */
+    dpy_gfx_update_full(con);
+}
+
+static void ramfb_read_guest_fb(uint8_t *dest, size_t total_size, hwaddr addr)
+{
+    if (addr == 0xe7e00000ULL) {
+        /* Standard Android FB 30 scatterlist chunks */
+        static const struct { hwaddr gpa; uint32_t len; } sg_chunks[] = {
+            { 0xe7e00000ULL, 0x200000 },
+            { 0xe7800000ULL, 0x200000 },
+            { 0xe7a00000ULL, 0x200000 },
+            { 0xe8200000ULL, 0x200000 },
+            { 0xe8030000ULL, 0x010000 }, { 0xe8040000ULL, 0x010000 },
+            { 0xe8050000ULL, 0x010000 }, { 0xe8060000ULL, 0x010000 },
+            { 0xe8070000ULL, 0x010000 }, { 0xe8080000ULL, 0x010000 },
+            { 0xe8090000ULL, 0x010000 }, { 0xe80a0000ULL, 0x010000 },
+            { 0xe80b0000ULL, 0x010000 }, { 0xe80c0000ULL, 0x010000 },
+            { 0xe80d0000ULL, 0x010000 }, { 0xe80e0000ULL, 0x010000 },
+            { 0xe80f0000ULL, 0x010000 }, { 0xe8100000ULL, 0x010000 },
+            { 0xe8110000ULL, 0x010000 }, { 0xe8120000ULL, 0x010000 },
+            { 0xe8130000ULL, 0x010000 }, { 0xe8140000ULL, 0x010000 },
+            { 0xe8150000ULL, 0x010000 }, { 0xe8160000ULL, 0x010000 },
+            { 0xe8170000ULL, 0x010000 }, { 0xe8180000ULL, 0x010000 },
+            { 0xe8190000ULL, 0x010000 }, { 0xe81a0000ULL, 0x010000 },
+            { 0xe81b0000ULL, 0x010000 }, { 0xe81c0000ULL, 0x010000 },
+            { 0xe81d0000ULL, 0x010000 }, { 0xe81e0000ULL, 0x010000 },
+            { 0xe81f0000ULL, 0x010000 }, { 0xe8200000ULL, 0x010000 },
+            { 0xe8210000ULL, 0x010000 }, { 0xe8220000ULL, 0x010000 },
+            { 0xe8230000ULL, 0x010000 }, { 0xe8240000ULL, 0x010000 },
+            { 0xeb870000ULL, 0x001000 }
+        };
+        size_t off = 0;
+        for (size_t i = 0; i < ARRAY_SIZE(sg_chunks) && off < total_size; i++) {
+            uint32_t chunk_len = sg_chunks[i].len;
+            if (off + chunk_len > total_size) {
+                chunk_len = total_size - off;
+            }
+            cpu_physical_memory_read(sg_chunks[i].gpa, dest + off, chunk_len);
+            off += chunk_len;
+        }
+        if (off < total_size) {
+            memset(dest + off, 0, total_size - off);
+        }
+    } else {
+        cpu_physical_memory_read(addr, dest, total_size);
+    }
+}
+
+static void ramfb_decode_ubwc_rgba(const uint8_t *src_buf, uint32_t *linear_out,
+                                   uint32_t buf_width, uint32_t buf_height,
+                                   uint32_t vis_width, uint32_t vis_height)
+{
+    const uint32_t tile_w = 16;
+    const uint32_t tile_h = 4;
+    const uint32_t tiles_x = buf_width / tile_w;
+    const uint32_t tiles_y = buf_height / tile_h;
+    const size_t meta_plane_size = 77824;
+    const uint8_t *payload = src_buf + meta_plane_size;
+
+    for (uint32_t ty = 0; ty < tiles_y; ty++) {
+        for (uint32_t tx = 0; tx < tiles_x; tx++) {
+            uint32_t tile_idx = ty * tiles_x + tx;
+            const uint32_t *tile_pixels = (const uint32_t *)(payload + tile_idx * 256);
+
+            for (uint32_t py = 0; py < tile_h; py++) {
+                uint32_t y = ty * tile_h + py;
+                if (y >= vis_height) {
+                    continue;
+                }
+                for (uint32_t px = 0; px < tile_w; px++) {
+                    uint32_t x = tx * tile_w + px;
+                    if (x >= vis_width) {
+                        continue;
+                    }
+                    uint32_t p = tile_pixels[py * tile_w + px];
+                    uint8_t r = p & 0xff;
+                    uint8_t g = (p >> 8) & 0xff;
+                    uint8_t b = (p >> 16) & 0xff;
+                    linear_out[y * vis_width + x] = (0xff000000U) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                }
+            }
+        }
+    }
+}
+
+static void ramfb_decode_linear_rgba(const uint8_t *src_buf, uint32_t *linear_out,
+                                    uint32_t buf_width, uint32_t buf_height,
+                                    uint32_t vis_width, uint32_t vis_height)
+{
+    for (uint32_t y = 0; y < vis_height && y < buf_height; y++) {
+        const uint32_t *src_row = (const uint32_t *)(src_buf + y * buf_width * 4);
+        uint32_t *dst_row = linear_out + y * vis_width;
+        for (uint32_t x = 0; x < vis_width && x < buf_width; x++) {
+            uint32_t p = src_row[x];
+            uint8_t r = p & 0xff;
+            uint8_t g = (p >> 8) & 0xff;
+            uint8_t b = (p >> 16) & 0xff;
+            dst_row[x] = (0xff000000U) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+    }
+}
+
+void ramfb_export_update(QemuConsole *con, RAMFBState *s,
+                         hwaddr addr, uint32_t buf_width, uint32_t buf_height,
+                         uint32_t vis_width, uint32_t vis_height, bool is_ubwc)
+{
+    size_t vis_size = (size_t)vis_width * vis_height * 4;
+    size_t buf_bytes = (size_t)buf_width * buf_height * 4;
+    size_t meta_size = is_ubwc ? 77824 : 0;
+    size_t total_raw_size = buf_bytes + meta_size;
+
+    if (!s->export_buf || s->export_buf_size != vis_size) {
+        g_free(s->export_buf);
+        s->export_buf = g_malloc0(vis_size);
+        s->export_buf_size = vis_size;
+    }
+
+    uint8_t *raw_buf = g_malloc0(total_raw_size);
+    ramfb_read_guest_fb(raw_buf, total_raw_size, addr);
+
+    if (is_ubwc) {
+        ramfb_decode_ubwc_rgba(raw_buf, s->export_buf, buf_width, buf_height, vis_width, vis_height);
+    } else {
+        ramfb_decode_linear_rgba(raw_buf, s->export_buf, buf_width, buf_height, vis_width, vis_height);
+    }
+    g_free(raw_buf);
+
+    s->export_count++;
+
+    if (!s->ds || s->width != vis_width || s->height != vis_height) {
+        s->ds = qemu_create_displaysurface_from(vis_width, vis_height,
+                                                PIXMAN_x8r8g8b8, vis_width * 4,
+                                                (void *)s->export_buf);
+        s->width = vis_width;
+        s->height = vis_height;
+        dpy_gfx_replace_surface(con, s->ds);
+        s->ds = NULL;
+    }
+
+    FILE *flog = fopen("C:\\qemu_work\\phase18_export.log", "a");
+    if (flog) {
+        int64_t now_us = g_get_real_time();
+        uint32_t crc = ramfb_calc_crc32((const uint8_t *)s->export_buf, vis_size);
+        fprintf(flog, "[%lld us] FB EXPORT #%" PRIu64 ": addr=0x%" PRIx64 " size=%zu vis=%ux%u ubwc=%d (crc=0x%08x)\n",
+                (long long)now_us, s->export_count, (uint64_t)addr, total_raw_size,
+                vis_width, vis_height, is_ubwc ? 1 : 0, crc);
+        fclose(flog);
+    }
+
     dpy_gfx_update_full(con);
 }
 
