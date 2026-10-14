@@ -1,11 +1,13 @@
 #include "qemu/osdep.h"
 #include "migration/vmstate.h"
 #include "qapi/error.h"
+#include "qemu/error-report.h"
 #include "qemu/module.h"
 #include "hw/loader.h"
 #include "hw/qdev-properties.h"
 #include "hw/display/ramfb.h"
 #include "ui/console.h"
+#include "ui/win32-android-display.h"
 #include "qom/object.h"
 
 typedef struct RAMFBStandaloneState RAMFBStandaloneState;
@@ -29,6 +31,7 @@ struct RAMFBStandaloneState {
     uint32_t export_height;
     bool export_ubwc;
     uint64_t export_count;
+    bool win32_display; /* x-win32-display: open independent Win32 window */
 };
 
 static void display_update_wrapper(void *dev)
@@ -61,6 +64,12 @@ static void ramfb_realizefn(DeviceState *dev, Error **errp)
     ramfb->state = ramfb_setup(errp);
     ramfb->export_count = 0;
     object_property_add_uint64_ptr(OBJECT(dev), "export-count", &ramfb->export_count, OBJ_PROP_FLAG_READ);
+
+    if (ramfb->win32_display) {
+        if (!win32_android_display_init(ramfb->con)) {
+            warn_report("ramfb: x-win32-display=on requested but Win32 display init failed");
+        }
+    }
 }
 
 static bool migrate_needed(void *opaque)
@@ -94,6 +103,7 @@ static Property ramfb_properties[] = {
     DEFINE_PROP_UINT32("x-export-width", RAMFBStandaloneState, export_width, 1080),
     DEFINE_PROP_UINT32("x-export-height", RAMFBStandaloneState, export_height, 2340),
     DEFINE_PROP_BOOL("x-export-ubwc", RAMFBStandaloneState, export_ubwc, true),
+    DEFINE_PROP_BOOL("x-win32-display", RAMFBStandaloneState, win32_display, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 
