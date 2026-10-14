@@ -212,6 +212,13 @@ struct QEMU_PACKED kgsl_gpuobj_import {
     uint32_t id;
 };
 
+struct QEMU_PACKED kgsl_command_object {
+    uint64_t gpuaddr;
+    uint64_t size;
+    uint32_t flags;
+    uint32_t id;
+};
+
 struct QEMU_PACKED kgsl_gpu_command {
     uint64_t flags;
     uint64_t cmdlist;
@@ -520,6 +527,12 @@ static int qcom_kgsl_execute_ioctl(QcomKgslState *s)
     }
 
     int ret = 0;
+    static FILE *flog = NULL;
+    static bool log_checked = false;
+    if (!log_checked) {
+        flog = fopen("C:\\qemu_work\\phase18_8_kgsl_trace.log", "w");
+        log_checked = true;
+    }
 
     switch (cmd) {
     case IOCTL_KGSL_DEVICE_GETPROPERTY: {
@@ -588,6 +601,13 @@ static int qcom_kgsl_execute_ioctl(QcomKgslState *s)
         alloc->id = id;
         alloc->mmapsize = aligned_sz;
         ret = 0;
+
+        if (flog) {
+            fprintf(flog, "[ALLOC #%u] size=%" PRIu64 " (0x%" PRIx64 ") flags=0x%" PRIx64 " va=0x%" PRIx64 " mmapsize=%" PRIu64 "\n",
+                    id, (uint64_t)alloc->size, (uint64_t)alloc->size, (uint64_t)alloc->flags,
+                    (uint64_t)s->gpu_objs[id].gpuaddr, (uint64_t)alloc->mmapsize);
+            fflush(flog);
+        }
         break;
     }
 
@@ -637,6 +657,12 @@ static int qcom_kgsl_execute_ioctl(QcomKgslState *s)
 
         imp->id = id;
         ret = 0;
+
+        if (flog) {
+            fprintf(flog, "[IMPORT #%u] type=%u flags=0x%" PRIx64 " priv=0x%" PRIx64 " priv_len=%" PRIu64 " va=0x%" PRIx64 "\n",
+                    id, imp->type, (uint64_t)imp->flags, (uint64_t)imp->priv, (uint64_t)imp->priv_len, (uint64_t)s->gpu_objs[id].gpuaddr);
+            fflush(flog);
+        }
         break;
     }
 
@@ -654,6 +680,29 @@ static int qcom_kgsl_execute_ioctl(QcomKgslState *s)
         qcom_kgsl_update_memstore(s, ctx_id, ts);
         cmd_req->timestamp = ts;
         ret = 0;
+
+        if (flog) {
+            fprintf(flog, "[GPU_COMMAND] ctx=%u ts=%u flags=0x%" PRIx64 " numcmds=%u (cmdlist=0x%" PRIx64 ") numobjs=%u (objlist=0x%" PRIx64 ") numsyncs=%u\n",
+                    ctx_id, ts, (uint64_t)cmd_req->flags, cmd_req->numcmds, (uint64_t)cmd_req->cmdlist,
+                    cmd_req->numobjs, (uint64_t)cmd_req->objlist, cmd_req->numsyncs);
+
+            /* Check if any GPU objects in heap contain non-zero data */
+            size_t nonzero_heap_bytes = 0;
+            for (uint32_t oi = 0; oi < s->next_obj_id && oi < KGSL_MAX_GPUOBJS; oi++) {
+                if (s->gpu_objs[oi].active && s->gpu_objs[oi].host_ptr) {
+                    const uint32_t *pw = (const uint32_t *)s->gpu_objs[oi].host_ptr;
+                    size_t nw = s->gpu_objs[oi].mmapsize / 4;
+                    for (size_t wi = 0; wi < nw; wi++) {
+                        if (pw[wi] != 0) {
+                            nonzero_heap_bytes += 4;
+                        }
+                    }
+                }
+            }
+            fprintf(flog, "  -> Active GPU objs: %u | Non-zero bytes in host_ptr: %zu\n",
+                    s->next_obj_id, nonzero_heap_bytes);
+            fflush(flog);
+        }
         break;
     }
 

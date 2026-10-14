@@ -10,7 +10,8 @@ void ramfb_diag_update(QemuConsole *con, RAMFBState *s, hwaddr addr,
                        uint32_t width, uint32_t height);
 void ramfb_export_update(QemuConsole *con, RAMFBState *s,
                          hwaddr addr, uint32_t buf_width, uint32_t buf_height,
-                         uint32_t vis_width, uint32_t vis_height, bool is_ubwc);
+                         uint32_t vis_width, uint32_t vis_height, bool is_ubwc,
+                         bool inject_test);
 RAMFBState *ramfb_setup(Error **errp);
 
 extern const VMStateDescription ramfb_vmstate;

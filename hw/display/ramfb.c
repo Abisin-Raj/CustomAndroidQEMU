@@ -346,6 +346,122 @@ static void ramfb_decode_ubwc_rgba(const uint8_t *src_buf, uint32_t *linear_out,
     }
 }
 
+static void ramfb_write_guest_fb(const uint8_t *src, size_t total_size, hwaddr addr)
+{
+    if (addr == 0xe7e00000ULL) {
+        /* Standard Android FB 30 scatterlist chunks */
+        static const struct { hwaddr gpa; uint32_t len; } sg_chunks[] = {
+            { 0xe7e00000ULL, 0x200000 },
+            { 0xe7800000ULL, 0x200000 },
+            { 0xe7a00000ULL, 0x200000 },
+            { 0xe8200000ULL, 0x200000 },
+            { 0xe8030000ULL, 0x010000 }, { 0xe8040000ULL, 0x010000 },
+            { 0xe8050000ULL, 0x010000 }, { 0xe8060000ULL, 0x010000 },
+            { 0xe8070000ULL, 0x010000 }, { 0xe8080000ULL, 0x010000 },
+            { 0xe8090000ULL, 0x010000 }, { 0xe80a0000ULL, 0x010000 },
+            { 0xe80b0000ULL, 0x010000 }, { 0xe80c0000ULL, 0x010000 },
+            { 0xe80d0000ULL, 0x010000 }, { 0xe80e0000ULL, 0x010000 },
+            { 0xe80f0000ULL, 0x010000 }, { 0xe8100000ULL, 0x010000 },
+            { 0xe8110000ULL, 0x010000 }, { 0xe8120000ULL, 0x010000 },
+            { 0xe8130000ULL, 0x010000 }, { 0xe8140000ULL, 0x010000 },
+            { 0xe8150000ULL, 0x010000 }, { 0xe8160000ULL, 0x010000 },
+            { 0xe8170000ULL, 0x010000 }, { 0xe8180000ULL, 0x010000 },
+            { 0xe8190000ULL, 0x010000 }, { 0xe81a0000ULL, 0x010000 },
+            { 0xe81b0000ULL, 0x010000 }, { 0xe81c0000ULL, 0x010000 },
+            { 0xe81d0000ULL, 0x010000 }, { 0xe81e0000ULL, 0x010000 },
+            { 0xe81f0000ULL, 0x010000 }, { 0xe8200000ULL, 0x010000 },
+            { 0xe8210000ULL, 0x010000 }, { 0xe8220000ULL, 0x010000 },
+            { 0xe8230000ULL, 0x010000 }, { 0xe8240000ULL, 0x010000 },
+            { 0xeb870000ULL, 0x001000 }
+        };
+        size_t off = 0;
+        for (size_t i = 0; i < ARRAY_SIZE(sg_chunks) && off < total_size; i++) {
+            uint32_t chunk_len = sg_chunks[i].len;
+            if (off + chunk_len > total_size) {
+                chunk_len = total_size - off;
+            }
+            cpu_physical_memory_write(sg_chunks[i].gpa, src + off, chunk_len);
+            off += chunk_len;
+        }
+    } else {
+        cpu_physical_memory_write(addr, src, total_size);
+    }
+}
+
+static void ramfb_generate_poc_pattern(uint8_t *dest, size_t total_size,
+                                      uint32_t buf_w, uint32_t buf_h,
+                                      uint32_t vis_w, uint32_t vis_h,
+                                      bool is_ubwc, uint64_t frame_num)
+{
+    static const uint32_t colors[8] = {
+        0xffffffff, /* White:   R=ff, G=ff, B=ff */
+        0xff00ffff, /* Yellow:  R=ff, G=ff, B=00 */
+        0xffffff00, /* Cyan:    R=00, G=ff, B=ff */
+        0xff00ff00, /* Green:   R=00, G=ff, B=00 */
+        0xffff00ff, /* Magenta: R=ff, G=00, B=ff */
+        0xff0000ff, /* Red:     R=ff, G=00, B=00 */
+        0xffff0000, /* Blue:    R=00, G=00, B=ff */
+        0xff202020  /* Dark:    R=20, G=20, B=20 */
+    };
+
+    if (is_ubwc) {
+        const uint32_t tile_w = 16;
+        const uint32_t tile_h = 4;
+        const uint32_t tiles_x = buf_w / tile_w;
+        const uint32_t tiles_y = buf_h / tile_h;
+        const size_t meta_plane_size = 77824;
+        uint8_t *payload = dest + meta_plane_size;
+
+        memset(dest, 0, meta_plane_size);
+
+        for (uint32_t ty = 0; ty < tiles_y; ty++) {
+            for (uint32_t tx = 0; tx < tiles_x; tx++) {
+                uint32_t tile_idx = ty * tiles_x + tx;
+                uint32_t *tile_pixels = (uint32_t *)(payload + tile_idx * 256);
+
+                for (uint32_t py = 0; py < tile_h; py++) {
+                    uint32_t y = ty * tile_h + py;
+                    for (uint32_t px = 0; px < tile_w; px++) {
+                        uint32_t x = tx * tile_w + px;
+                        uint32_t col;
+                        /* Central banner (y between 35% and 65%): Android Green #3DDC84 */
+                        if (y >= (vis_h * 35) / 100 && y < (vis_h * 65) / 100) {
+                            col = 0xff84dc3dU;
+                        } else {
+                            uint32_t bar = (x * 8) / (vis_w > 0 ? vis_w : 1);
+                            if (bar >= 8) bar = 7;
+                            col = colors[bar];
+                        }
+                        /* Frame counter indicator in top-left 32x32 pixels to ensure changing CRC */
+                        if (x < 32 && y < 32) {
+                            col = ((frame_num + (x / 8) + (y / 8)) & 1) ? 0xffffffffU : 0xff000000U;
+                        }
+                        tile_pixels[py * tile_w + px] = col;
+                    }
+                }
+            }
+        }
+    } else {
+        for (uint32_t y = 0; y < buf_h; y++) {
+            uint32_t *row = (uint32_t *)(dest + y * buf_w * 4);
+            for (uint32_t x = 0; x < buf_w; x++) {
+                uint32_t col;
+                if (y >= (vis_h * 35) / 100 && y < (vis_h * 65) / 100) {
+                    col = 0xff84dc3dU;
+                } else {
+                    uint32_t bar = (x * 8) / (vis_w > 0 ? vis_w : 1);
+                    if (bar >= 8) bar = 7;
+                    col = colors[bar];
+                }
+                if (x < 32 && y < 32) {
+                    col = ((frame_num + (x / 8) + (y / 8)) & 1) ? 0xffffffffU : 0xff000000U;
+                }
+                row[x] = col;
+            }
+        }
+    }
+}
+
 static void ramfb_decode_linear_rgba(const uint8_t *src_buf, uint32_t *linear_out,
                                     uint32_t buf_width, uint32_t buf_height,
                                     uint32_t vis_width, uint32_t vis_height)
@@ -365,12 +481,23 @@ static void ramfb_decode_linear_rgba(const uint8_t *src_buf, uint32_t *linear_ou
 
 void ramfb_export_update(QemuConsole *con, RAMFBState *s,
                          hwaddr addr, uint32_t buf_width, uint32_t buf_height,
-                         uint32_t vis_width, uint32_t vis_height, bool is_ubwc)
+                         uint32_t vis_width, uint32_t vis_height, bool is_ubwc,
+                         bool inject_test)
 {
     size_t vis_size = (size_t)vis_width * vis_height * 4;
     size_t buf_bytes = (size_t)buf_width * buf_height * 4;
     size_t meta_size = is_ubwc ? 77824 : 0;
     size_t total_raw_size = buf_bytes + meta_size;
+
+    if (inject_test) {
+        uint8_t *inject_buf = g_malloc0(total_raw_size);
+        ramfb_generate_poc_pattern(inject_buf, total_raw_size,
+                                   buf_width, buf_height,
+                                   vis_width, vis_height,
+                                   is_ubwc, s->export_count);
+        ramfb_write_guest_fb(inject_buf, total_raw_size, addr);
+        g_free(inject_buf);
+    }
 
     if (!s->export_buf || s->export_buf_size != vis_size) {
         g_free(s->export_buf);

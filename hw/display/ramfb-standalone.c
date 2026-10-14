@@ -32,6 +32,7 @@ struct RAMFBStandaloneState {
     bool export_ubwc;
     uint64_t export_count;
     bool win32_display; /* x-win32-display: open independent Win32 window */
+    bool export_inject_test; /* x-export-inject-test: POC test pattern injection */
 };
 
 static void display_update_wrapper(void *dev)
@@ -42,7 +43,7 @@ static void display_update_wrapper(void *dev)
         ramfb_export_update(ramfb->con, ramfb->state, ramfb->export_addr,
                             ramfb->export_buf_width, ramfb->export_buf_height,
                             ramfb->export_width, ramfb->export_height,
-                            ramfb->export_ubwc);
+                            ramfb->export_ubwc, ramfb->export_inject_test);
         ramfb->export_count++;
     } else if (ramfb->diag_mode) {
         ramfb_diag_update(ramfb->con, ramfb->state, ramfb->diag_addr,
@@ -104,6 +105,7 @@ static Property ramfb_properties[] = {
     DEFINE_PROP_UINT32("x-export-height", RAMFBStandaloneState, export_height, 2340),
     DEFINE_PROP_BOOL("x-export-ubwc", RAMFBStandaloneState, export_ubwc, true),
     DEFINE_PROP_BOOL("x-win32-display", RAMFBStandaloneState, win32_display, false),
+    DEFINE_PROP_BOOL("x-export-inject-test", RAMFBStandaloneState, export_inject_test, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 
