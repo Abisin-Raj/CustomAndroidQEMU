@@ -482,14 +482,43 @@ static void ramfb_decode_linear_rgba(const uint8_t *src_buf, uint32_t *linear_ou
 void ramfb_export_update(QemuConsole *con, RAMFBState *s,
                          hwaddr addr, uint32_t buf_width, uint32_t buf_height,
                          uint32_t vis_width, uint32_t vis_height, bool is_ubwc,
-                         bool inject_test)
+                         bool inject_test, const char *bootanim_dir)
 {
     size_t vis_size = (size_t)vis_width * vis_height * 4;
     size_t buf_bytes = (size_t)buf_width * buf_height * 4;
     size_t meta_size = is_ubwc ? 77824 : 0;
     size_t total_raw_size = buf_bytes + meta_size;
+    static int s_bootanim_frame = 0;
+    static int s_bootanim_tick = 0;
 
-    if (inject_test) {
+    if (bootanim_dir && bootanim_dir[0] != '\0') {
+        char fname[64];
+        s_bootanim_tick++;
+        if (s_bootanim_tick >= 2) {
+            s_bootanim_tick = 0;
+            s_bootanim_frame++;
+        }
+        snprintf(fname, sizeof(fname), "frame_%03d.raw", s_bootanim_frame);
+        char *frame_path = g_build_filename(bootanim_dir, fname, NULL);
+        FILE *ff = fopen(frame_path, "rb");
+        if (!ff && s_bootanim_frame > 0) {
+            s_bootanim_frame = 0;
+            g_free(frame_path);
+            snprintf(fname, sizeof(fname), "frame_%03d.raw", s_bootanim_frame);
+            frame_path = g_build_filename(bootanim_dir, fname, NULL);
+            ff = fopen(frame_path, "rb");
+        }
+        if (ff) {
+            uint8_t *anim_raw = g_malloc(total_raw_size);
+            size_t nread = fread(anim_raw, 1, total_raw_size, ff);
+            fclose(ff);
+            if (nread == total_raw_size) {
+                ramfb_write_guest_fb(anim_raw, total_raw_size, addr);
+            }
+            g_free(anim_raw);
+        }
+        g_free(frame_path);
+    } else if (inject_test) {
         uint8_t *inject_buf = g_malloc0(total_raw_size);
         ramfb_generate_poc_pattern(inject_buf, total_raw_size,
                                    buf_width, buf_height,
@@ -542,9 +571,11 @@ void ramfb_export_update(QemuConsole *con, RAMFBState *s,
     if (flog) {
         int64_t now_us = g_get_real_time();
         uint32_t dec_crc = ramfb_calc_crc32((const uint8_t *)s->export_buf, vis_size);
-        fprintf(flog, "[%lld us] FB EXPORT #%" PRIu64 ": addr=0x%" PRIx64 " size=%zu vis=%ux%u ubwc=%d | raw_crc=0x%08x dec_crc=0x%08x | nonzero_words=%zu/%zu\n",
+        fprintf(flog, "[%lld us] FB EXPORT #%" PRIu64 ": addr=0x%" PRIx64 " size=%zu vis=%ux%u ubwc=%d | raw_crc=0x%08x dec_crc=0x%08x | nonzero_words=%zu/%zu%s%d\n",
                 (long long)now_us, s->export_count, (uint64_t)addr, total_raw_size,
-                vis_width, vis_height, is_ubwc ? 1 : 0, raw_crc, dec_crc, nonzero_raw_words, total_words);
+                vis_width, vis_height, is_ubwc ? 1 : 0, raw_crc, dec_crc, nonzero_raw_words, total_words,
+                bootanim_dir ? " | bootanim_frame=" : "",
+                bootanim_dir ? s_bootanim_frame : 0);
         fclose(flog);
     }
 

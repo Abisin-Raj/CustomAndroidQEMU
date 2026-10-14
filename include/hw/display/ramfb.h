@@ -11,7 +11,7 @@ void ramfb_diag_update(QemuConsole *con, RAMFBState *s, hwaddr addr,
 void ramfb_export_update(QemuConsole *con, RAMFBState *s,
                          hwaddr addr, uint32_t buf_width, uint32_t buf_height,
                          uint32_t vis_width, uint32_t vis_height, bool is_ubwc,
-                         bool inject_test);
+                         bool inject_test, const char *bootanim_dir);
 RAMFBState *ramfb_setup(Error **errp);
 
 extern const VMStateDescription ramfb_vmstate;
