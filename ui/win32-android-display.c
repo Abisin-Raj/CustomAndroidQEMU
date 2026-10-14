@@ -163,7 +163,7 @@ static void staging_copy_surface_locked(Win32AndroidDisplay *d,
  * Win32 window procedure
  * ========================================================= */
 
-static void win32ad_do_blit(Win32AndroidDisplay *d, HWND hwnd)
+static void win32ad_do_blit(Win32AndroidDisplay *d, HWND hwnd, HDC hdc_in, bool force_redraw)
 {
     /* Snapshot staging buffer under lock */
     EnterCriticalSection(&d->cs);
@@ -172,7 +172,7 @@ static void win32ad_do_blit(Win32AndroidDisplay *d, HWND hwnd)
     int stride = d->staging_stride;
     bool dirty = d->staging_dirty;
     uint8_t *pixels = NULL;
-    if (dirty && w > 0 && h > 0 && d->staging) {
+    if ((dirty || force_redraw) && w > 0 && h > 0 && d->staging) {
         size_t sz = (size_t)stride * h;
         pixels = (uint8_t *)malloc(sz);
         if (pixels) {
@@ -202,7 +202,13 @@ static void win32ad_do_blit(Win32AndroidDisplay *d, HWND hwnd)
     int dst_w = rc.right  - rc.left;
     int dst_h = rc.bottom - rc.top;
 
-    HDC hdc = GetDC(hwnd);
+    bool release_dc = false;
+    HDC hdc = hdc_in;
+    if (!hdc) {
+        hdc = GetDC(hwnd);
+        release_dc = true;
+    }
+
     if (hdc) {
         SetStretchBltMode(hdc, HALFTONE);
         StretchDIBits(hdc,
@@ -212,11 +218,15 @@ static void win32ad_do_blit(Win32AndroidDisplay *d, HWND hwnd)
                       &bi,
                       DIB_RGB_COLORS,
                       SRCCOPY);
-        ReleaseDC(hwnd, hdc);
+        if (release_dc) {
+            ReleaseDC(hwnd, hdc);
+        }
         d->blit_count++;
-        if ((d->blit_count % 60) == 1) {
-            ad_log("BLIT #%llu: src=%dx%d dst=%dx%d\n",
-                   (unsigned long long)d->blit_count, w, h, dst_w, dst_h);
+        if ((d->blit_count % 60) == 1 || d->blit_count <= 5) {
+            const uint32_t *p32 = (const uint32_t *)pixels;
+            ad_log("BLIT #%llu: src=%dx%d dst=%dx%d sample_px[0..3]=0x%08x 0x%08x 0x%08x 0x%08x\n",
+                   (unsigned long long)d->blit_count, w, h, dst_w, dst_h,
+                   p32[0], p32[1], p32[2], p32[3]);
         }
     }
 
@@ -235,7 +245,7 @@ static LRESULT CALLBACK win32ad_wndproc(HWND hwnd, UINT msg,
 
     case WIN32AD_WM_REFRESH:
         if (d) {
-            win32ad_do_blit(d, hwnd);
+            win32ad_do_blit(d, hwnd, NULL, false);
         }
         return 0;
 
@@ -246,13 +256,20 @@ static LRESULT CALLBACK win32ad_wndproc(HWND hwnd, UINT msg,
 
     case WM_PAINT: {
         PAINTSTRUCT ps;
-        BeginPaint(hwnd, &ps);
+        HDC hdc = BeginPaint(hwnd, &ps);
         if (d) {
-            win32ad_do_blit(d, hwnd);
+            win32ad_do_blit(d, hwnd, hdc, true);
         }
         EndPaint(hwnd, &ps);
         return 0;
     }
+
+    case WM_PRINT:
+    case WM_PRINTCLIENT:
+        if (d) {
+            win32ad_do_blit(d, hwnd, (HDC)wp, true);
+        }
+        return 0;
 
     case WM_SIZE:
         InvalidateRect(hwnd, NULL, FALSE);

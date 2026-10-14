@@ -35,6 +35,7 @@ struct RAMFBState {
     uint32_t width, height;
     struct RAMFBCfg cfg;
     bool diag_initialized;
+    bool export_initialized;
     uint32_t *export_buf;
     size_t export_buf_size;
     uint64_t export_count;
@@ -380,6 +381,17 @@ void ramfb_export_update(QemuConsole *con, RAMFBState *s,
     uint8_t *raw_buf = g_malloc0(total_raw_size);
     ramfb_read_guest_fb(raw_buf, total_raw_size, addr);
 
+    /* Inspect raw guest RAM */
+    size_t nonzero_raw_words = 0;
+    const uint32_t *raw32 = (const uint32_t *)raw_buf;
+    size_t total_words = total_raw_size / 4;
+    for (size_t wi = 0; wi < total_words; wi++) {
+        if (raw32[wi] != 0) {
+            nonzero_raw_words++;
+        }
+    }
+    uint32_t raw_crc = ramfb_calc_crc32(raw_buf, total_raw_size);
+
     if (is_ubwc) {
         ramfb_decode_ubwc_rgba(raw_buf, s->export_buf, buf_width, buf_height, vis_width, vis_height);
     } else {
@@ -389,23 +401,23 @@ void ramfb_export_update(QemuConsole *con, RAMFBState *s,
 
     s->export_count++;
 
-    if (!s->ds || s->width != vis_width || s->height != vis_height) {
-        s->ds = qemu_create_displaysurface_from(vis_width, vis_height,
-                                                PIXMAN_x8r8g8b8, vis_width * 4,
-                                                (void *)s->export_buf);
+    if (!s->export_initialized || s->width != vis_width || s->height != vis_height) {
+        DisplaySurface *ds = qemu_create_displaysurface_from(vis_width, vis_height,
+                                                            PIXMAN_x8r8g8b8, vis_width * 4,
+                                                            (void *)s->export_buf);
         s->width = vis_width;
         s->height = vis_height;
-        dpy_gfx_replace_surface(con, s->ds);
-        s->ds = NULL;
+        s->export_initialized = true;
+        dpy_gfx_replace_surface(con, ds);
     }
 
     FILE *flog = fopen("C:\\qemu_work\\phase18_export.log", "a");
     if (flog) {
         int64_t now_us = g_get_real_time();
-        uint32_t crc = ramfb_calc_crc32((const uint8_t *)s->export_buf, vis_size);
-        fprintf(flog, "[%lld us] FB EXPORT #%" PRIu64 ": addr=0x%" PRIx64 " size=%zu vis=%ux%u ubwc=%d (crc=0x%08x)\n",
+        uint32_t dec_crc = ramfb_calc_crc32((const uint8_t *)s->export_buf, vis_size);
+        fprintf(flog, "[%lld us] FB EXPORT #%" PRIu64 ": addr=0x%" PRIx64 " size=%zu vis=%ux%u ubwc=%d | raw_crc=0x%08x dec_crc=0x%08x | nonzero_words=%zu/%zu\n",
                 (long long)now_us, s->export_count, (uint64_t)addr, total_raw_size,
-                vis_width, vis_height, is_ubwc ? 1 : 0, crc);
+                vis_width, vis_height, is_ubwc ? 1 : 0, raw_crc, dec_crc, nonzero_raw_words, total_words);
         fclose(flog);
     }
 
