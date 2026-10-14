@@ -423,6 +423,7 @@ static uint64_t qcom_kgsl_mmio_read(void *opaque, hwaddr offset, unsigned size)
 {
     QcomKgslState *s = opaque;
     uint32_t idx = offset / 4;
+    uint64_t val = 0;
 
     if (offset >= KGSL_MMIO_SIZE) {
         return 0;
@@ -431,21 +432,29 @@ static uint64_t qcom_kgsl_mmio_read(void *opaque, hwaddr offset, unsigned size)
     /* Mailbox registers */
     switch (offset) {
     case KGSL_REG_MAGIC:
-        return KGSL_MAGIC_VAL;
+        val = KGSL_MAGIC_VAL;
+        break;
     case KGSL_REG_CMD:
-        return s->mb_cmd;
+        val = s->mb_cmd;
+        break;
     case KGSL_REG_ARG_GPA_LO:
-        return (uint32_t)(s->mb_arg_gpa & 0xffffffff);
+        val = (uint32_t)(s->mb_arg_gpa & 0xffffffff);
+        break;
     case KGSL_REG_ARG_GPA_HI:
-        return (uint32_t)(s->mb_arg_gpa >> 32);
+        val = (uint32_t)(s->mb_arg_gpa >> 32);
+        break;
     case KGSL_REG_ARG_SIZE:
-        return s->mb_arg_size;
+        val = s->mb_arg_size;
+        break;
     case KGSL_REG_STATUS:
-        return (uint32_t)s->mb_status;
+        val = (uint32_t)s->mb_status;
+        break;
     case KGSL_REG_MEMSTORE_GPA_LO:
-        return 0x050a0000U;
+        val = 0x050a0000U;
+        break;
     case KGSL_REG_MEMSTORE_GPA_HI:
-        return 0;
+        val = 0;
+        break;
 
     /* A6xx GPU status registers */
     case A6XX_RBBM_STATUS_BYTE:
@@ -455,10 +464,27 @@ static uint64_t qcom_kgsl_mmio_read(void *opaque, hwaddr offset, unsigned size)
     case A6XX_CP_PROTECT_STATUS_BYTE:
     case A6XX_CP_SQE_STAT_DATA_BYTE:
     case A6XX_UCHE_CLIENT_PF_BYTE:
-        return 0; /* Hardware status registers: 0 indicates idle and healthy */
+        val = 0; /* Hardware status registers: 0 indicates idle and healthy */
+        break;
     default:
-        return s->regs[idx];
+        val = s->regs[idx];
+        break;
     }
+
+    static const bool kgsl_debug_mmio = false;
+    if (kgsl_debug_mmio) {
+        static int read_log_count = 0;
+        if (read_log_count < 100) {
+            read_log_count++;
+            FILE *f = fopen("C:\\qemu_work\\phase18_9_kgsl_mmio.log", "a");
+            if (f) {
+                fprintf(f, "[MMIO_READ #%d] off=0x%05x val=0x%08" PRIx64 " size=%u\n",
+                        read_log_count, (unsigned)offset, val, size);
+                fclose(f);
+            }
+        }
+    }
+    return val;
 }
 
 static void qcom_kgsl_mmio_write(void *opaque, hwaddr offset, uint64_t value, unsigned size)
@@ -468,6 +494,20 @@ static void qcom_kgsl_mmio_write(void *opaque, hwaddr offset, uint64_t value, un
 
     if (offset >= KGSL_MMIO_SIZE) {
         return;
+    }
+
+    static const bool kgsl_debug_mmio = false;
+    if (kgsl_debug_mmio) {
+        static int write_log_count = 0;
+        if (write_log_count < 100) {
+            write_log_count++;
+            FILE *f = fopen("C:\\qemu_work\\phase18_9_kgsl_mmio.log", "a");
+            if (f) {
+                fprintf(f, "[MMIO_WRITE #%d] off=0x%05x val=0x%08" PRIx64 " size=%u\n",
+                        write_log_count, (unsigned)offset, value, size);
+                fclose(f);
+            }
+        }
     }
 
     switch (offset) {
